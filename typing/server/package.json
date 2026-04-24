@@ -1,0 +1,15 @@
+{
+  "name": "hs-romaji-typing-server",
+  "version": "1.1.0",
+  "private": true,
+  "description": "高校生向け日本語ローマ字タイピングゲーム（校内LAN運用）",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
