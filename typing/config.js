@@ -3,6 +3,7 @@
     SERVER_PUBLIC_HOST: 'midori-st-sv',
     SERVER_PORT: 3100,
     SERVER_PROTOCOL: 'http',
+    SERVER_WS_URL: '',
     WS_PATH: '/ws',
     GAS_SYNC: {
       enabled: true,
