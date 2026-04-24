@@ -5,9 +5,13 @@
   const SERVER_PROTOCOL = String(APP_CONFIG.SERVER_PROTOCOL || (location.protocol === 'https:' ? 'https' : 'http'));
   const WS_PATH = String(APP_CONFIG.WS_PATH || '/ws');
   const PAGE_IS_HTTP = location.protocol === 'http:' || location.protocol === 'https:';
+  const PAGE_IS_HTTPS = location.protocol === 'https:';
   const SERVER_BASE_URL = `${SERVER_PROTOCOL}://${SERVER_PUBLIC_HOST}${SERVER_PORT ? `:${SERVER_PORT}` : ''}`;
+  const CONFIGURED_WS_URL = String(APP_CONFIG.SERVER_WS_URL || '').trim();
+  const DERIVED_WS_SCHEME = SERVER_PROTOCOL === 'https' ? 'wss' : 'ws';
+  const DERIVED_WS_URL = `${DERIVED_WS_SCHEME}://${SERVER_PUBLIC_HOST}${SERVER_PORT ? `:${SERVER_PORT}` : ''}${WS_PATH}`;
   const WS_URL = PAGE_IS_HTTP
-    ? `${SERVER_PROTOCOL === 'https' ? 'wss' : 'ws'}://${SERVER_PUBLIC_HOST}${SERVER_PORT ? `:${SERVER_PORT}` : ''}${WS_PATH}`
+    ? (CONFIGURED_WS_URL || (PAGE_IS_HTTPS && DERIVED_WS_SCHEME !== 'wss' ? '' : DERIVED_WS_URL))
     : '';
   const STUDENT_CSV_URL = './student.csv';
   const PLAYER_STORAGE_KEY = 'typing_player_v4';
