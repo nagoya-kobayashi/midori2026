@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>クラス別ランキング</title>
+  <link rel="stylesheet" href="./css/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>クラス別ランキング</h1>
+    <nav class="top-links">
+      <a href="./index.html">生徒画面</a>
+      <a href="./admin.html">管理画面</a>
+    </nav>
+    <div class="badge connected">HTTP表示</div>
+  </header>
+
+  <main class="ranking-main">
+    <section class="card hero-card">
+      <div>
+        <p class="eyebrow">Ranking</p>
+        <h2>クラスごとのベスト記録を確認</h2>
+        <p class="hero-copy">
+          同一クラス内では、同一生徒のベスト記録を採用しています。
+          同点時は正確率、ミス数、記録時刻の順で順位を決定します。
+        </p>
+      </div>
+      <dl class="hero-meta compact">
+        <div><dt>表示方式</dt><dd id="modeLabel">best</dd></div>
+        <div><dt>対象クラス数</dt><dd id="classCounter">0</dd></div>
+        <div><dt>最終更新</dt><dd id="updatedAt">-</dd></div>
+      </dl>
+    </section>
+
+    <section class="card">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Filter</p>
+          <h2>ランキング条件</h2>
+        </div>
+      </div>
+      <div class="ranking-controls">
+        <label for="classSelect">クラス</label>
+        <select id="classSelect"></select>
+        <button id="refreshRanking" class="btn-primary" type="button">更新</button>
+      </div>
+      <p id="rankingStatus" class="muted">読み込み中...</p>
+    </section>
+
+    <section class="card">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Board</p>
+          <h2>順位表</h2>
+        </div>
+      </div>
+      <table class="ranking-table">
+        <thead>
+          <tr>
+            <th>順位</th>
+            <th>名前</th>
+            <th>スコア</th>
+            <th>正確率</th>
+            <th>記録時刻</th>
+          </tr>
+        </thead>
+        <tbody id="rankingTbody"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="./config.js"></script>
+  <script src="./js/ranking.js" defer></script>
+</body>
+</html>

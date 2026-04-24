@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>タイピング競技 管理画面</title>
+  <link rel="stylesheet" href="./css/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>タイピング競技 管理画面</h1>
+    <nav class="top-links">
+      <a href="./index.html">生徒画面</a>
+      <a href="./ranking.html">ランキング</a>
+    </nav>
+    <div id="adminConnectionBadge" class="badge disconnected">WS: 未接続</div>
+  </header>
+
+  <main class="admin-main">
+    <section class="card hero-card admin-hero">
+      <div>
+        <p class="eyebrow">管理用ダッシュボード</p>
+        <h2>出席表ベースで接続状態と競技進行をサーバー基準で管理</h2>
+        <p class="hero-copy">
+          クラス行と出席番号列で、生徒ごとの接続状態を一覧できます。
+          開始操作は常に接続者全員へ一斉に反映され、ページ更新や再接続後も状態を復元します。
+        </p>
+      </div>
+      <dl class="hero-meta compact">
+        <div><dt>サーバー時刻</dt><dd id="serverClock">-</dd></div>
+        <div><dt>クラス数</dt><dd id="classCount">0</dd></div>
+        <div><dt>接続人数合計</dt><dd id="connectedTotal">0</dd></div>
+        <div><dt>プレイ中合計</dt><dd id="playingTotal">0</dd></div>
+      </dl>
+    </section>
+
+    <section class="card">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Start Control</p>
+          <h2>一斉開始 / モード制御</h2>
+        </div>
+      </div>
+      <div class="admin-controls">
+        <div class="start-mode-row">
+          <span id="offlineModeStatus" class="session-badge">オンライン運用</span>
+          <button id="toggleOfflineModeBtn" class="btn-secondary" type="button">オフラインモード: OFF</button>
+          <button id="forceStopBtn" class="btn-danger" type="button">強制終了</button>
+        </div>
+        <div class="duration-control-group">
+          <label class="duration-field" for="durationInput">
+            <span>プレイ時間</span>
+            <div class="duration-input-shell">
+              <input id="durationInput" type="text" inputmode="numeric" value="05:00" aria-label="プレイ時間">
+              <div class="duration-stepper" aria-label="プレイ時間の増減">
+                <button id="durationUpBtn" class="duration-step-btn" type="button" aria-label="プレイ時間を増やす">▲</button>
+                <button id="durationDownBtn" class="duration-step-btn" type="button" aria-label="プレイ時間を減らす">▼</button>
+              </div>
+            </div>
+          </label>
+          <div class="duration-presets" aria-label="プレイ時間プリセット">
+            <button class="btn-secondary duration-preset-btn" type="button" data-duration-sec="300">5分</button>
+            <button class="btn-secondary duration-preset-btn" type="button" data-duration-sec="180">3分</button>
+            <button class="btn-secondary duration-preset-btn" type="button" data-duration-sec="60">1分</button>
+            <button class="btn-secondary duration-preset-btn" type="button" data-duration-sec="20">20秒</button>
+          </div>
+        </div>
+        <button id="startAllBtn" class="btn-primary" type="button">全クラス一斉開始</button>
+        <button id="startAllNoRankBtn" class="btn-secondary" type="button">スタート（順位非表示）</button>
+        <span class="muted">接続中の参加者全員をサーバー時刻基準で3秒後に開始します。5分以外のプレイは記録保存しません。</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Attendance Monitor</p>
+          <h2>接続状態マトリクス</h2>
+        </div>
+      </div>
+      <div class="attendance-legend">
+        <span><i class="seat-dot seat-dot--offline"></i>オフライン</span>
+        <span><i class="seat-dot seat-dot--standby"></i>スタンバイ</span>
+        <span><i class="seat-dot seat-dot--playing"></i>プレイ中</span>
+      </div>
+      <div class="attendance-board-wrap">
+        <table id="attendanceBoard" class="attendance-board"></table>
+      </div>
+      <p id="unassignedSummary" class="muted attendance-note"></p>
+    </section>
+
+    <section class="card">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Record Control</p>
+          <h2>記録削除</h2>
+        </div>
+      </div>
+      <div class="admin-controls">
+        <button id="clearAllRecordsBtn" class="btn-danger" type="button">記録全消去</button>
+        <button id="refreshScoreCatalogBtn" class="btn-secondary" type="button">gameId一覧を更新</button>
+        <label class="duration-field admin-select-field" for="deleteGameIdsSelect">
+          <span>削除する gameId（複数選択可）</span>
+          <select id="deleteGameIdsSelect" class="admin-multi-select" multiple size="8" aria-label="削除する gameId"></select>
+        </label>
+        <button id="clearSelectedGamesBtn" class="btn-secondary" type="button">選択 gameId を削除</button>
+        <button id="loadGameRecordsBtn" class="btn-secondary" type="button">選択 gameId のレコードを表示</button>
+        <label class="duration-field admin-select-field" for="deleteRecordIdsSelect">
+          <span>選択 gameId 内のレコード（複数選択可）</span>
+          <select id="deleteRecordIdsSelect" class="admin-multi-select" multiple size="8" aria-label="削除するレコード"></select>
+        </label>
+        <button id="clearSelectedRecordsBtn" class="btn-secondary" type="button">選択レコードを削除</button>
+        <span class="muted">ローカルの scores.jsonl / scores.csv を更新し、その後に GAS へ全件再同期します。</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Ranking</p>
+          <h2>ランキング</h2>
+        </div>
+        <div class="admin-ranking-actions">
+          <button id="rankingRosterSortBtn" class="btn-secondary" type="button">名簿順</button>
+          <button id="rankingScoreSortBtn" class="btn-secondary" type="button">スコア順</button>
+          <button id="copyAdminRankingBtn" class="btn-secondary" type="button">クリップボードにコピー</button>
+          <button id="refreshAdminRankingBtn" class="btn-secondary" type="button">ランキングを更新</button>
+        </div>
+      </div>
+      <div id="adminRankingTabs" class="admin-ranking-tabs" role="tablist" aria-label="ランキング対象切替">
+        <button class="admin-ranking-tab is-active" type="button" data-ranking-target="selectedGame" role="tab" aria-selected="true">選択gameId</button>
+        <button class="admin-ranking-tab" type="button" data-ranking-target="overall" role="tab" aria-selected="false">全員</button>
+        <button class="admin-ranking-tab" type="button" data-ranking-target="A" role="tab" aria-selected="false">A</button>
+        <button class="admin-ranking-tab" type="button" data-ranking-target="B" role="tab" aria-selected="false">B</button>
+        <button class="admin-ranking-tab" type="button" data-ranking-target="C" role="tab" aria-selected="false">C</button>
+        <button class="admin-ranking-tab" type="button" data-ranking-target="D" role="tab" aria-selected="false">D</button>
+        <button class="admin-ranking-tab" type="button" data-ranking-target="E" role="tab" aria-selected="false">E</button>
+        <button class="admin-ranking-tab" type="button" data-ranking-target="F" role="tab" aria-selected="false">F</button>
+        <button class="admin-ranking-tab" type="button" data-ranking-target="G" role="tab" aria-selected="false">G</button>
+        <button class="admin-ranking-tab" type="button" data-ranking-target="H" role="tab" aria-selected="false">H</button>
+      </div>
+      <div class="admin-ranking-block">
+        <h3 id="adminRankingScopeTitle">選択gameId ランキング</h3>
+        <p id="adminRankingScopeMeta" class="muted"></p>
+        <div class="admin-ranking-table-wrap">
+          <table class="ranking-table admin-ranking-table">
+            <thead>
+              <tr>
+                <th>順位</th>
+                <th>クラス</th>
+                <th>番号</th>
+                <th>名前</th>
+                <th>スコア</th>
+                <th>正確率</th>
+              </tr>
+            </thead>
+            <tbody id="adminRankingBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Log</p>
+          <h2>運用ログ</h2>
+        </div>
+      </div>
+      <div id="adminLog" class="admin-log"></div>
+    </section>
+  </main>
+
+  <script src="./config.js"></script>
+  <script src="./js/admin.js" defer></script>
+</body>
+</html>
