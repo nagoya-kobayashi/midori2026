@@ -23,6 +23,9 @@
   const DEBUG_LAYOUT = new URL(location.href).searchParams.get('debug') === '1';
   const WS_CONNECT_TIMEOUT_MS = 2000;
   const OUTSIDE_AUTH_FALLBACK_DELAY_MS = 7000;
+  const AUTH_GET_TIMEOUT_MS = 25000;
+  const AUTH_POST_TIMEOUT_MS = 30000;
+  const AUTH_RETRY_ATTEMPTS = 2;
   const HIGH_COMBO_ANNOUNCE_START = 400;
   const HIGH_COMBO_ANNOUNCE_STEP = 100;
   const HOME_ROW_DISPLAY_KEYS = new Set(['a', 's', 'd', 'f', 'j', 'k', 'l', ';']);
@@ -1217,7 +1220,7 @@
     }
     return sha256HexFallback(text);
   }
-  async function postGasJson(payload) {
+  async function postGasJson(payload, timeoutMs) {
     if (!canUseClientGas()) {
       throw new Error('GAS unavailable');
     }
@@ -1227,57 +1230,73 @@
         'Content-Type': 'text/plain'
       },
       body: JSON.stringify(payload || {})
-    });
+    }, Number.isFinite(timeoutMs) ? timeoutMs : PUBLIC_GAS_SYNC.timeoutMs);
+  }
+  async function fetchJsonWithRetry(action, attempts = AUTH_RETRY_ATTEMPTS) {
+    let lastError = null;
+    for (let attempt = 0; attempt < Math.max(1, attempts); attempt += 1) {
+      try {
+        return await action(attempt);
+      } catch (error) {
+        lastError = error;
+        const isTimeout = error && (error.name === 'AbortError' || /aborted/i.test(String(error.message || '')));
+        const isNetwork = error && (error.name === 'TypeError' || /Failed to fetch|NetworkError/i.test(String(error.message || '')));
+        if (!isTimeout && !isNetwork) {
+          throw error;
+        }
+      }
+    }
+    throw lastError || new Error('request_failed');
   }
   async function fetchAuthStatusFromGas(uid) {
-    return fetchJsonWithTimeout(buildGasClientUrl({
+    return fetchJsonWithRetry(() => fetchJsonWithTimeout(buildGasClientUrl({
       mode: 'auth_status',
       uid
-    }), { method: 'GET' });
+    }), { method: 'GET' }, AUTH_GET_TIMEOUT_MS));
   }
   async function fetchAuthSaltFromGas(uid) {
-    return fetchJsonWithTimeout(buildGasClientUrl({
+    return fetchJsonWithRetry(() => fetchJsonWithTimeout(buildGasClientUrl({
       mode: 'auth_get_salt',
       uid
-    }), { method: 'GET' });
+    }), { method: 'GET' }, AUTH_GET_TIMEOUT_MS));
   }
   async function validateAuthSessionOnGas(uid, sessionId) {
-    return fetchJsonWithTimeout(buildGasClientUrl({
+    return fetchJsonWithRetry(() => fetchJsonWithTimeout(buildGasClientUrl({
       mode: 'auth_validate_session',
       uid,
       sessionId
-    }), { method: 'GET' });
+    }), { method: 'GET' }, AUTH_GET_TIMEOUT_MS));
   }
   async function setOutsidePasswordOnGas(uid, passwordPlain) {
     const salt = randomAuthSalt(3);
     const passwordHash = await sha256Hex(`${String(passwordPlain || '')}${salt}`);
-    return postGasJson({
+    return fetchJsonWithRetry(() => postGasJson({
       mode: 'auth_set_password',
       uid,
       salt,
       passwordHash
-    });
+    }, AUTH_POST_TIMEOUT_MS));
   }
   async function resetOutsidePasswordOnGas(uid) {
-    return postGasJson({
+    return fetchJsonWithRetry(() => postGasJson({
       mode: 'auth_reset_password',
       uid
-    });
+    }, AUTH_POST_TIMEOUT_MS));
   }
   async function loginOutsideOnGas(uid, salt, passwordPlain) {
     const passwordHash = await sha256Hex(`${String(passwordPlain || '')}${String(salt || '')}`);
-    return postGasJson({
+    return fetchJsonWithRetry(() => postGasJson({
       mode: 'auth_login',
       uid,
       passwordHash
-    });
+    }, AUTH_POST_TIMEOUT_MS));
   }
   async function logoutOutsideOnGas(uid, sessionId) {
-    return postGasJson({
+    return fetchJsonWithRetry(() => postGasJson({
       mode: 'auth_logout',
       uid,
       sessionId
-    });
+    }, AUTH_POST_TIMEOUT_MS));
   }
   function buildSoloSnapshotCacheKey(classId) {
     return `${SOLO_SNAPSHOT_CACHE_KEY_PREFIX}${String(classId || '').trim().toUpperCase()}`;
@@ -4325,6 +4344,16 @@
       note: `uid=${uid} を解決できなかったため test を使用します。`
     };
   }
+  function describeAuthFailure(error, fallbackMessage) {
+    const message = String(error && error.message || '');
+    if (error && (error.name === 'AbortError' || /aborted/i.test(message))) {
+      return '認証サーバの応答が遅いため切断しました。少し待ってから再度お試しください。';
+    }
+    if (error && (error.name === 'TypeError' || /Failed to fetch|NetworkError/i.test(message))) {
+      return 'ネットワーク通信に失敗しました。回線状況を確認して再度お試しください。';
+    }
+    return fallbackMessage;
+  }
   async function handleOutsideAuthIdSubmit(event) {
     event.preventDefault();
     if (!isOutsideAuthRequired()) {
@@ -4337,7 +4366,7 @@
       return;
     }
     const token = invalidateOutsideAuthRequests();
-    setOutsideAuthHint(els.outsideAuthIdHint, 'IDを確認しています。');
+    setOutsideAuthHint(els.outsideAuthIdHint, 'IDを確認しています。初回は最大30秒ほどかかります。');
     try {
       const identity = await resolveIdentityByUid(uid, { strict: true });
       if (!isOutsideAuthRequestActive(token)) {
@@ -4360,11 +4389,14 @@
       state.outsideAuth.pendingIdentity = identity;
       updateIdentity();
       showOutsideAuthStep('password', 'パスワードを入力してください。');
-    } catch {
+    } catch (error) {
       if (!isOutsideAuthRequestActive(token)) {
         return;
       }
-      setOutsideAuthHint(els.outsideAuthIdHint, '認証情報の取得に失敗しました。時間をおいて再度お試しください。');
+      setOutsideAuthHint(
+        els.outsideAuthIdHint,
+        describeAuthFailure(error, '認証情報の取得に失敗しました。時間をおいて再度お試しください。')
+      );
     }
   }
   async function handleOutsideAuthPasswordSubmit(event) {
@@ -4382,7 +4414,7 @@
       return;
     }
     const token = invalidateOutsideAuthRequests();
-    setOutsideAuthHint(els.outsideAuthPasswordHint, 'ログインしています。');
+    setOutsideAuthHint(els.outsideAuthPasswordHint, 'ログインしています。初回は最大30秒ほどかかります。');
     try {
       const login = await loginOutsideOnGas(uid, salt, password);
       if (!isOutsideAuthRequestActive(token)) {
@@ -4399,11 +4431,14 @@
       updateIdentity();
       setNotice('校外オンラインにログインしました。スペースキーで開始できます。');
       showReadyLanding('ready');
-    } catch {
+    } catch (error) {
       if (!isOutsideAuthRequestActive(token)) {
         return;
       }
-      setOutsideAuthHint(els.outsideAuthPasswordHint, 'ログイン通信に失敗しました。再度お試しください。');
+      setOutsideAuthHint(
+        els.outsideAuthPasswordHint,
+        describeAuthFailure(error, 'ログイン通信に失敗しました。再度お試しください。')
+      );
     }
   }
   async function handleResultOutsidePasswordSet() {
