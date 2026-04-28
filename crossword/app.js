@@ -92,11 +92,25 @@
   }
 
   async function loadCsv(path) {
-    const response = await fetch(`${path}?v=${Date.now()}`, { cache: "no-store" });
-    if (!response.ok) {
+    const embedded = window.CROSSWORD_EMBEDDED_CSV?.[path];
+
+    try {
+      const response = await fetch(`${path}?v=${Date.now()}`, { cache: "no-store" });
+      if (response.ok) {
+        return parseCsv(await response.text());
+      }
+      if (embedded != null) {
+        console.warn(`${path}: ${response.status}; using embedded data`);
+        return parseCsv(embedded);
+      }
       throw new Error(`${path}: ${response.status}`);
+    } catch (error) {
+      if (embedded != null) {
+        console.warn(`${path}: fetch failed; using embedded data`, error);
+        return parseCsv(embedded);
+      }
+      throw error;
     }
-    return parseCsv(await response.text());
   }
 
   function parseCsv(text) {
