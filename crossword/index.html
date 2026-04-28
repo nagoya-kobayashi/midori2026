@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>クロスワード</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main id="loginScreen" class="login-screen">
+      <section class="login-panel">
+        <h1>クロスワード</h1>
+        <div class="login-fields">
+          <label>
+            <span>クラス</span>
+            <input id="classInput" autocomplete="off" inputmode="text" placeholder="A">
+          </label>
+          <label>
+            <span>番号</span>
+            <input id="numberInput" autocomplete="off" inputmode="numeric" placeholder="1">
+          </label>
+        </div>
+        <div id="namePreview" class="name-preview"></div>
+        <div id="candidateList" class="candidate-list"></div>
+        <button id="loginOkButton" class="primary-button" type="button" hidden>OK</button>
+      </section>
+    </main>
+
+    <main id="gameScreen" class="game-screen" hidden>
+      <header class="top-bar">
+        <div id="playerBadge" class="player-badge"></div>
+        <div id="scoreBadge" class="score-badge"></div>
+      </header>
+
+      <section class="game-layout">
+        <section class="board-pane">
+          <div id="crosswordGrid" class="crossword-grid" aria-label="クロスワード盤面"></div>
+          <div id="hintBox" class="hint-box">
+            <div>タテ：</div>
+            <div>ヨコ：</div>
+          </div>
+        </section>
+
+        <section class="side-pane">
+          <section class="card-pane">
+            <div id="cardGrid" class="card-grid" aria-label="文字カード"></div>
+          </section>
+          <section class="chat-pane">
+            <div id="chatLog" class="chat-log" aria-live="polite"></div>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <div id="moveHelp" class="move-help" hidden>
+      <div class="move-help-panel">
+        <p>矢印キーでカーソル移動</p>
+        <button id="moveHelpClose" class="primary-button" type="button">OK</button>
+      </div>
+    </div>
+
+    <div id="termOverlay" class="term-overlay" hidden>
+      <article class="term-card">
+        <h2 id="termTitle"></h2>
+        <p id="termExplanation"></p>
+        <button id="termCloseButton" class="primary-button" type="button">閉じる</button>
+      </article>
+    </div>
+
+    <div id="confettiLayer" class="confetti-layer" aria-hidden="true"></div>
+
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
