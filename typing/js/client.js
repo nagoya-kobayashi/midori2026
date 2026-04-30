@@ -1142,16 +1142,30 @@
     }
     return bytes;
   }
-  function sha256HexFallback(text) {
+  function appendSha256BitLength(bytes, bitLength, options = {}) {
+    if (options.legacyLengthEncoding) {
+      for (let index = 7; index >= 0; index -= 1) {
+        bytes.push((bitLength >>> (index * 8)) & 0xff);
+      }
+      return;
+    }
+    const high = Math.floor(bitLength / 0x100000000);
+    const low = bitLength >>> 0;
+    for (let index = 3; index >= 0; index -= 1) {
+      bytes.push((high >>> (index * 8)) & 0xff);
+    }
+    for (let index = 3; index >= 0; index -= 1) {
+      bytes.push((low >>> (index * 8)) & 0xff);
+    }
+  }
+  function sha256HexFallback(text, options = {}) {
     const bytes = encodeUtf8Bytes(text);
     const bitLength = bytes.length * 8;
     bytes.push(0x80);
     while ((bytes.length % 64) !== 56) {
       bytes.push(0x00);
     }
-    for (let index = 7; index >= 0; index -= 1) {
-      bytes.push((bitLength >>> (index * 8)) & 0xff);
-    }
+    appendSha256BitLength(bytes, bitLength, options);
     const k = [
       0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
       0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
@@ -1220,6 +1234,15 @@
     }
     return sha256HexFallback(text);
   }
+  function sha256HexLegacyFallback(text) {
+    return sha256HexFallback(text, { legacyLengthEncoding: true });
+  }
+  async function buildAuthPasswordHashes(passwordPlain, salt) {
+    const source = `${String(passwordPlain || '')}${String(salt || '')}`;
+    const primary = await sha256Hex(source);
+    const legacy = sha256HexLegacyFallback(source);
+    return primary === legacy ? [primary] : [primary, legacy];
+  }
   async function postGasJson(payload, timeoutMs) {
     if (!canUseClientGas()) {
       throw new Error('GAS unavailable');
@@ -1284,12 +1307,23 @@
     }, AUTH_POST_TIMEOUT_MS));
   }
   async function loginOutsideOnGas(uid, salt, passwordPlain) {
-    const passwordHash = await sha256Hex(`${String(passwordPlain || '')}${String(salt || '')}`);
-    return fetchJsonWithRetry(() => postGasJson({
-      mode: 'auth_login',
-      uid,
-      passwordHash
-    }, AUTH_POST_TIMEOUT_MS));
+    const passwordHashes = await buildAuthPasswordHashes(passwordPlain, salt);
+    let lastResponse = null;
+    for (let index = 0; index < passwordHashes.length; index += 1) {
+      const login = await fetchJsonWithRetry(() => postGasJson({
+        mode: 'auth_login',
+        uid,
+        passwordHash: passwordHashes[index]
+      }, AUTH_POST_TIMEOUT_MS));
+      if (login && login.ok === true) {
+        return login;
+      }
+      lastResponse = login;
+      if (!login || login.error !== 'invalid_password') {
+        break;
+      }
+    }
+    return lastResponse;
   }
   async function logoutOutsideOnGas(uid, sessionId) {
     return fetchJsonWithRetry(() => postGasJson({
