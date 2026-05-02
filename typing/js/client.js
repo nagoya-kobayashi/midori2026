@@ -1325,6 +1325,13 @@
     }
     return lastResponse;
   }
+  async function fetchOutsideStudentSelfFromGas(uid, sessionId) {
+    return fetchJsonWithRetry(() => fetchJsonWithTimeout(buildGasClientUrl({
+      mode: 'student_self',
+      uid,
+      sessionId
+    }), { method: 'GET' }, AUTH_GET_TIMEOUT_MS));
+  }
   async function logoutOutsideOnGas(uid, sessionId) {
     return fetchJsonWithRetry(() => postGasJson({
       mode: 'auth_logout',
@@ -1979,13 +1986,20 @@
     els.playerNameInput.value = state.player.playerName || '';
     els.classIdInput.value = state.player.classId || '';
     if (els.outsideAuthPasswordTarget) {
+      const pendingUid = String(state.outsideAuth.pendingUid || '').trim();
       const name = state.outsideAuth.pendingIdentity && state.outsideAuth.pendingIdentity.playerName
         ? state.outsideAuth.pendingIdentity.playerName
         : (state.player.playerName || '');
       const classId = state.outsideAuth.pendingIdentity && state.outsideAuth.pendingIdentity.classId
         ? state.outsideAuth.pendingIdentity.classId
         : (state.player.classId || '');
-      els.outsideAuthPasswordTarget.textContent = name ? `${classId || '-'} ${name}` : '';
+      if (name) {
+        els.outsideAuthPasswordTarget.textContent = `${classId || '-'} ${name}`;
+      } else if (pendingUid) {
+        els.outsideAuthPasswordTarget.textContent = `ID: ${pendingUid}`;
+      } else {
+        els.outsideAuthPasswordTarget.textContent = '';
+      }
     }
     els.modeChip.textContent = modeLabel();
     refreshConnectionBadge();
@@ -2568,21 +2582,6 @@
       setOutsideAuthHint(els.outsideAuthStoredHint, '保存済みセッションを確認しています。');
     }
     try {
-      const identity = await resolveIdentityByUid(stored.uid, { strict: true });
-      if (!isOutsideAuthRequestActive(token, activeRequestOptions)) {
-        return false;
-      }
-      if (!identity) {
-        clearOutsideAuthSession();
-        resetOutsideAuthState();
-        setStoredOutsideSessionDisplay(null);
-        if (auto) {
-          showOutsideAuthGate('保存済みIDを確認できませんでした。IDとパスワードでログインしてください。');
-        } else {
-          showOutsideAuthStep('id', '保存済みIDを確認できませんでした。IDを入力してください。');
-        }
-        return false;
-      }
       const validation = await validateAuthSessionOnGas(stored.uid, stored.sessionId);
       if (!isOutsideAuthRequestActive(token, activeRequestOptions)) {
         return false;
@@ -2598,9 +2597,27 @@
         }
         return false;
       }
+      const sessionId = String(validation.sessionId || stored.sessionId);
+      const studentSelf = await fetchOutsideStudentSelfFromGas(stored.uid, sessionId);
+      if (!isOutsideAuthRequestActive(token, activeRequestOptions)) {
+        return false;
+      }
+      const identity = buildIdentityFromGasStudentSelf(stored.uid, studentSelf);
+      if (!identity) {
+        clearOutsideAuthSession();
+        resetOutsideAuthState();
+        setStoredOutsideSessionDisplay(null);
+        if (auto) {
+          showOutsideAuthGate('保存済みIDの生徒情報を取得できませんでした。IDとパスワードでログインしてください。');
+        } else {
+          showOutsideAuthStep('id', '保存済みIDの生徒情報を取得できませんでした。IDを入力してください。');
+        }
+        return false;
+      }
+      mergeClassmatesIntoStudentMap(studentSelf && studentSelf.classmates);
       state.player = identity;
       savePlayer();
-      applyOutsideAuthSession(stored.uid, String(validation.sessionId || stored.sessionId));
+      applyOutsideAuthSession(stored.uid, sessionId);
       state.outsideAuth.resumingStoredSession = false;
       resetOutsideAuthState();
       updateIdentity();
@@ -4233,6 +4250,49 @@
     }
     return 0;
   }
+  function mergeClassmatesIntoStudentMap(classmates) {
+    const list = Array.isArray(classmates) ? classmates : [];
+    if (!list.length) {
+      return getCachedStudentMap();
+    }
+    const baseMap = { ...getCachedStudentMap() };
+    list.forEach((entry) => {
+      const uid = String(entry && entry.uid || '').trim();
+      const playerName = String(entry && entry.name || '').trim();
+      if (!uid || !playerName) return;
+      const classRaw = String(entry && entry.classId || '').trim();
+      const classId = classRaw ? classRaw.toUpperCase() : '';
+      const attendanceNo = String(entry && entry.no !== undefined && entry.no !== null ? entry.no : '').trim();
+      baseMap[uid] = {
+        classId,
+        playerName,
+        attendanceNo
+      };
+    });
+    cacheStudents(baseMap);
+    cachedStudentMap = baseMap;
+    return baseMap;
+  }
+  function buildIdentityFromGasStudentSelf(uid, response) {
+    const safeUid = String(uid || '').trim();
+    if (!safeUid || !response || response.ok !== true || !response.self) {
+      return null;
+    }
+    const self = response.self;
+    const classRaw = String(self.classId || '').trim();
+    const classId = classRaw ? classRaw.toUpperCase() : '';
+    const playerName = String(self.name || '').trim();
+    if (!classId || !playerName) return null;
+    return {
+      uid: safeUid,
+      classId,
+      classRow: deriveClassRow(classId),
+      attendanceNo: normalizeAttendanceNo(self.no, safeUid),
+      playerName,
+      playerId: `uid:${safeUid}`,
+      note: `uid=${safeUid} を GAS 経由で読み込みました。`
+    };
+  }
   function cacheStudents(map) { localStorage.setItem(STUDENT_CACHE_KEY, JSON.stringify(map)); }
   function readStudentCache() { try { return JSON.parse(localStorage.getItem(STUDENT_CACHE_KEY) || '{}'); } catch { return {}; } }
   function getCachedStudentMap() {
@@ -4402,25 +4462,25 @@
     const token = invalidateOutsideAuthRequests();
     setOutsideAuthHint(els.outsideAuthIdHint, 'IDを確認しています。初回は最大30秒ほどかかります。');
     try {
-      const identity = await resolveIdentityByUid(uid, { strict: true });
-      if (!isOutsideAuthRequestActive(token)) {
-        return;
-      }
-      if (!identity) {
-        setOutsideAuthHint(els.outsideAuthIdHint, 'IDが見つかりません。確認してください。');
-        return;
-      }
       const saltResponse = await fetchAuthSaltFromGas(uid);
       if (!isOutsideAuthRequestActive(token)) {
         return;
       }
-      if (!saltResponse || saltResponse.ok !== true || saltResponse.configured !== true || !saltResponse.salt) {
+      if (!saltResponse || saltResponse.ok !== true) {
+        setOutsideAuthHint(els.outsideAuthIdHint, 'IDの確認に失敗しました。時間をおいて再度お試しください。');
+        return;
+      }
+      if (saltResponse.exists === false) {
+        setOutsideAuthHint(els.outsideAuthIdHint, 'IDが見つかりません。確認してください。');
+        return;
+      }
+      if (saltResponse.configured !== true || !saltResponse.salt) {
         setOutsideAuthHint(els.outsideAuthIdHint, '校外アクセス用パスワードが未設定です。校内で設定してください。');
         return;
       }
       state.outsideAuth.pendingUid = uid;
       state.outsideAuth.pendingSalt = String(saltResponse.salt || '');
-      state.outsideAuth.pendingIdentity = identity;
+      state.outsideAuth.pendingIdentity = null;
       updateIdentity();
       showOutsideAuthStep('password', 'パスワードを入力してください。');
     } catch (error) {
@@ -4437,9 +4497,8 @@
     event.preventDefault();
     const uid = String(state.outsideAuth.pendingUid || '').trim();
     const salt = String(state.outsideAuth.pendingSalt || '').trim();
-    const identity = state.outsideAuth.pendingIdentity;
     const password = String(els.outsideAuthPasswordInput.value || '');
-    if (!uid || !salt || !identity) {
+    if (!uid || !salt) {
       showOutsideAuthStep('id', '先にIDを入力してください。');
       return;
     }
@@ -4458,7 +4517,19 @@
         setOutsideAuthHint(els.outsideAuthPasswordHint, 'ログインに失敗しました。IDまたはパスワードを確認してください。');
         return;
       }
-      applyOutsideAuthSession(uid, String(login.sessionId || ''));
+      const sessionId = String(login.sessionId || '');
+      setOutsideAuthHint(els.outsideAuthPasswordHint, '生徒情報を取得しています。');
+      const studentSelf = await fetchOutsideStudentSelfFromGas(uid, sessionId);
+      if (!isOutsideAuthRequestActive(token)) {
+        return;
+      }
+      const identity = buildIdentityFromGasStudentSelf(uid, studentSelf);
+      if (!identity) {
+        setOutsideAuthHint(els.outsideAuthPasswordHint, '生徒情報の取得に失敗しました。再度お試しください。');
+        return;
+      }
+      mergeClassmatesIntoStudentMap(studentSelf && studentSelf.classmates);
+      applyOutsideAuthSession(uid, sessionId);
       state.player = identity;
       savePlayer();
       resetOutsideAuthState();
