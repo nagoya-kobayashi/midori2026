@@ -61,22 +61,20 @@
 
   document.addEventListener("DOMContentLoaded", init);
 
+  let lookupRequestId = 0;
+  let lookupDebounceTimer = 0;
+
   async function init() {
     bindEvents();
     try {
-      const [termRows, studentRows] = await Promise.all([
-        loadCsv("crossword_terms.csv"),
-        loadCsv("student.csv")
-      ]);
-      state.students = prepareStudents(studentRows);
-      state.studentsByUid = new Map(state.students.map((student) => [student.uid, student]));
+      const termRows = await loadCsv("crossword_terms.csv");
       state.terms = prepareTerms(termRows);
       state.termsById = new Map(state.terms.map((term) => [term.id, term]));
       buildBoard();
       renderLoginMatch();
       els.classInput.focus();
     } catch (error) {
-      els.namePreview.textContent = "CSVを読み込めません";
+      els.namePreview.textContent = "データを読み込めません";
       console.error(error);
     }
   }
@@ -166,25 +164,6 @@
         });
         return record;
       });
-  }
-
-  function prepareStudents(rows) {
-    return rows
-      .filter((row) => row.year.trim() === "1")
-      .map((row) => ({
-        uid: row.id.trim(),
-        year: row.year.trim(),
-        className: row.class.trim().toUpperCase(),
-        no: String(Number(row.no)),
-        name: row.name.trim(),
-        kana: row.kana.trim()
-      }))
-      .filter((student) => student.uid && student.className && student.no !== "NaN")
-      .sort((a, b) => (
-        Number(a.year) - Number(b.year)
-        || a.className.localeCompare(b.className)
-        || Number(a.no) - Number(b.no)
-      ));
   }
 
   function prepareTerms(rows) {
@@ -299,13 +278,60 @@
   function renderLoginMatch() {
     const parsedClass = parseClassValue(els.classInput.value);
     const no = normalizeNumber(els.numberInput.value);
-    const matches = findStudentMatches(parsedClass, no);
+
+    state.selectedStudent = null;
+    els.namePreview.textContent = "";
+    els.loginOkButton.hidden = true;
+    els.candidateList.replaceChildren();
+
+    window.clearTimeout(lookupDebounceTimer);
+    lookupRequestId += 1;
+
+    if (!parsedClass.className || !no) {
+      state.students = [];
+      state.studentsByUid = new Map();
+      return;
+    }
+
+    const requestId = lookupRequestId;
+    lookupDebounceTimer = window.setTimeout(() => {
+      runStudentLookup(requestId, parsedClass, no);
+    }, 200);
+  }
+
+  async function runStudentLookup(requestId, parsedClass, no) {
+    let matches = [];
+    try {
+      const response = await lookupStudents(parsedClass.className, no, "1");
+      matches = Array.isArray(response?.students) ? response.students : [];
+    } catch (error) {
+      if (requestId !== lookupRequestId) return;
+      console.warn("student lookup failed", error);
+      els.namePreview.textContent = "通信エラー";
+      return;
+    }
+
+    if (requestId !== lookupRequestId) {
+      return;
+    }
+
+    matches = matches
+      .filter((student) => student && student.uid && student.className)
+      .filter((student) => !parsedClass.year || student.year === parsedClass.year)
+      .sort((a, b) => (
+        Number(a.year) - Number(b.year)
+        || String(a.className).localeCompare(String(b.className))
+        || Number(a.no) - Number(b.no)
+      ));
+
+    state.students = matches;
+    state.studentsByUid = new Map(matches.map((student) => [student.uid, student]));
     state.selectedStudent = matches[0] || null;
 
     els.namePreview.textContent = state.selectedStudent ? state.selectedStudent.name : "";
     els.loginOkButton.hidden = !state.selectedStudent;
-
     els.candidateList.replaceChildren();
+
     if (matches.length > 1) {
       matches.slice(0, 8).forEach((student, index) => {
         const button = document.createElement("button");
@@ -345,21 +371,13 @@
     return numeric ? String(Number(numeric)) : "";
   }
 
-  function findStudentMatches(parsedClass, no) {
-    if (!parsedClass.className || !no) {
-      return [];
-    }
-    return state.students.filter((student) => (
-      student.className === parsedClass.className
-      && student.no === no
-      && (!parsedClass.year || student.year === parsedClass.year)
-    ));
-  }
-
   function startGame() {
     if (!state.selectedStudent) {
       return;
     }
+
+    window.clearTimeout(lookupDebounceTimer);
+    lookupRequestId += 1;
 
     state.currentStudent = state.selectedStudent;
     state.cursorGuideVisible = true;
@@ -368,6 +386,25 @@
     els.loginScreen.hidden = true;
     els.gameScreen.hidden = false;
     renderAll();
+    fetchRosterAndSharedState();
+  }
+
+  async function fetchRosterAndSharedState() {
+    try {
+      const response = await fetchRoster(state.currentStudent.year, state.currentStudent.className);
+      const roster = Array.isArray(response?.students) ? response.students : [];
+      if (roster.length > 0) {
+        state.students = roster;
+        state.studentsByUid = new Map(roster.map((student) => [student.uid, student]));
+      } else if (!state.studentsByUid.has(state.currentStudent.uid)) {
+        state.studentsByUid.set(state.currentStudent.uid, state.currentStudent);
+      }
+    } catch (error) {
+      console.warn("roster fetch failed", error);
+      if (!state.studentsByUid.has(state.currentStudent.uid)) {
+        state.studentsByUid.set(state.currentStudent.uid, state.currentStudent);
+      }
+    }
     fetchSharedState();
   }
 
@@ -1121,6 +1158,43 @@
       });
       if (!response.ok) {
         throw new Error(`state: ${response.status}`);
+      }
+      return response.json();
+    }
+  }
+
+  async function lookupStudents(className, no, year) {
+    const url = getGasUrl();
+    if (!url) {
+      throw new Error("GAS URL is not configured");
+    }
+    const params = { action: "lookup", class: className, no, t: Date.now() };
+    if (year) {
+      params.year = year;
+    }
+    try {
+      return await requestJsonp(url, params);
+    } catch {
+      const response = await fetch(withParams(url, params), { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`lookup: ${response.status}`);
+      }
+      return response.json();
+    }
+  }
+
+  async function fetchRoster(year, className) {
+    const url = getGasUrl();
+    if (!url) {
+      throw new Error("GAS URL is not configured");
+    }
+    const params = { action: "roster", year, class: className, t: Date.now() };
+    try {
+      return await requestJsonp(url, params);
+    } catch {
+      const response = await fetch(withParams(url, params), { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`roster: ${response.status}`);
       }
       return response.json();
     }
