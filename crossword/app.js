@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VIEW_SIZE = 15;
+  const VIEW_SIZE = 10;
   const PREFILLED_RATIO = 0.1;
   const STORAGE_PREFIX = "crosswordProgress:";
   const HELP_STORAGE_KEY = "crosswordMoveHelpSeen";
@@ -10,17 +10,20 @@
   const els = {
     loginScreen: document.getElementById("loginScreen"),
     gameScreen: document.getElementById("gameScreen"),
-    classInput: document.getElementById("classInput"),
-    numberInput: document.getElementById("numberInput"),
-    namePreview: document.getElementById("namePreview"),
-    candidateList: document.getElementById("candidateList"),
-    loginOkButton: document.getElementById("loginOkButton"),
+    authStatus: document.getElementById("authStatus"),
+    authIdentity: document.getElementById("authIdentity"),
+    authClassLine: document.getElementById("authClassLine"),
+    authNameLine: document.getElementById("authNameLine"),
+    authError: document.getElementById("authError"),
+    authLoginButton: document.getElementById("authLoginButton"),
+    authStartButton: document.getElementById("authStartButton"),
+    authLogoutButton: document.getElementById("authLogoutButton"),
     playerBadge: document.getElementById("playerBadge"),
     scoreBadge: document.getElementById("scoreBadge"),
     crosswordGrid: document.getElementById("crosswordGrid"),
     hintBox: document.getElementById("hintBox"),
     cardGrid: document.getElementById("cardGrid"),
-    chatLog: document.getElementById("chatLog"),
+    rankingList: document.getElementById("rankingList"),
     moveHelp: document.getElementById("moveHelp"),
     moveHelpClose: document.getElementById("moveHelpClose"),
     termOverlay: document.getElementById("termOverlay"),
@@ -50,8 +53,9 @@
     solvedWords: new Set(),
     remoteProgress: new Map(),
     previousCounts: new Map(),
-    chatMessages: [],
-    seenChatMilestones: new Set(),
+    lastSolvedAt: new Map(),
+    displayNameByUid: new Map(),
+    authUser: null,
     sharedStateInitialized: false,
     overlayQueue: [],
     overlayOpen: false,
@@ -61,32 +65,181 @@
 
   document.addEventListener("DOMContentLoaded", init);
 
-  let lookupRequestId = 0;
-  let lookupDebounceTimer = 0;
-
   async function init() {
     bindEvents();
     try {
-      const termRows = await loadCsv("crossword_terms.csv");
+      const [termRows, studentRows] = await Promise.all([
+        loadCsv("crossword_terms.csv"),
+        loadCsv("student.csv")
+      ]);
+      state.students = prepareStudents(studentRows);
+      state.studentsByUid = new Map(state.students.map((student) => [student.uid, student]));
       state.terms = prepareTerms(termRows);
       state.termsById = new Map(state.terms.map((term) => [term.id, term]));
       buildBoard();
-      renderLoginMatch();
-      els.classInput.focus();
     } catch (error) {
-      els.namePreview.textContent = "データを読み込めません";
+      showAuthError("データを読み込めません。");
       console.error(error);
+      return;
     }
+
+    await runAuthFlow();
   }
 
   function bindEvents() {
-    els.classInput.addEventListener("input", renderLoginMatch);
-    els.numberInput.addEventListener("input", renderLoginMatch);
-    els.loginOkButton.addEventListener("click", startGame);
+    els.authLoginButton.addEventListener("click", handleLoginClick);
+    els.authStartButton.addEventListener("click", startGame);
+    els.authLogoutButton.addEventListener("click", handleLogoutClick);
     els.moveHelpClose.addEventListener("click", closeMoveHelp);
     els.termCloseButton.addEventListener("click", closeTermOverlay);
     els.crosswordGrid.addEventListener("click", handleBoardClick);
     document.addEventListener("keydown", handleKeydown);
+    window.addEventListener("resize", () => {
+      if (state.currentStudent) {
+        renderCards();
+      }
+    });
+  }
+
+  async function runAuthFlow() {
+    if (!window.MidoriAuth) {
+      showAuthError("認証モジュールを読み込めませんでした。ページを再読み込みしてください。");
+      return;
+    }
+
+    setAuthStatus("ログインを確認しています…");
+    try {
+      const result = await window.MidoriAuth.start({
+        appId: "crossword",
+        appName: "クロスワード",
+        authRequired: false,
+        showLoginButton: false
+      });
+      applyAuthResult(result);
+    } catch (error) {
+      showAuthError(error && error.userMessage ? error.userMessage : "認証エラーが発生しました。");
+    }
+  }
+
+  function applyAuthResult(result) {
+    if (result && result.mode === "user" && result.user) {
+      const student = resolveAuthStudent(result.user);
+      if (!student) {
+        showLoginPrompt("ログイン中のユーザは1年生の名簿にありません。別のユーザでログインしてください。");
+        return;
+      }
+      state.selectedStudent = student;
+      state.authUser = result.user;
+      const displayName = String(result.user.displayName || "").trim();
+      if (displayName) {
+        state.displayNameByUid.set(student.uid, displayName);
+      }
+      showIdentity(student);
+      return;
+    }
+    state.authUser = null;
+    showLoginPrompt();
+  }
+
+  function resolveAuthStudent(user) {
+    const uid = String(user.userId || "").trim();
+    if (!uid) {
+      return null;
+    }
+    return state.studentsByUid.get(uid) || null;
+  }
+
+  function showIdentity(student) {
+    els.authStatus.hidden = true;
+    els.authError.hidden = true;
+    els.authIdentity.hidden = false;
+    els.authClassLine.textContent = `${student.className}組 ${student.no}番`;
+    els.authNameLine.textContent = student.name;
+    els.authLoginButton.hidden = true;
+    els.authStartButton.hidden = false;
+    els.authLogoutButton.hidden = false;
+    els.authStartButton.focus();
+  }
+
+  function showLoginPrompt(message) {
+    state.selectedStudent = null;
+    els.authIdentity.hidden = true;
+    els.authError.hidden = !message;
+    if (message) {
+      els.authError.textContent = message;
+    }
+    setAuthStatus("ログインしてください。");
+    els.authLoginButton.hidden = false;
+    els.authStartButton.hidden = true;
+    els.authLogoutButton.hidden = true;
+    els.authLoginButton.focus();
+  }
+
+  function setAuthStatus(text) {
+    els.authStatus.textContent = text;
+    els.authStatus.hidden = false;
+  }
+
+  function showAuthError(message) {
+    els.authIdentity.hidden = true;
+    els.authStatus.hidden = true;
+    els.authLoginButton.hidden = true;
+    els.authStartButton.hidden = true;
+    els.authLogoutButton.hidden = true;
+    els.authError.hidden = false;
+    els.authError.textContent = message;
+  }
+
+  async function handleLoginClick() {
+    await promptLoginDialog();
+  }
+
+  async function handleLogoutClick() {
+    state.selectedStudent = null;
+    hideAuthPanelContent();
+    clearAuthIdentityDisplay();
+    if (window.MidoriAuth && typeof window.MidoriAuth.logout === "function") {
+      try {
+        await window.MidoriAuth.logout();
+      } catch (error) {
+        /* ローカル状態はクリア済み。 */
+      }
+    }
+    await promptLoginDialog();
+  }
+
+  function hideAuthPanelContent() {
+    els.authStatus.hidden = true;
+    els.authIdentity.hidden = true;
+    els.authError.hidden = true;
+    els.authLoginButton.hidden = true;
+    els.authStartButton.hidden = true;
+    els.authLogoutButton.hidden = true;
+  }
+
+  function clearAuthIdentityDisplay() {
+    els.authClassLine.textContent = "";
+    els.authNameLine.textContent = "";
+  }
+
+  async function promptLoginDialog() {
+    if (!window.MidoriAuth) {
+      showAuthError("認証モジュールを読み込めませんでした。");
+      return;
+    }
+    try {
+      const result = await window.MidoriAuth.showLoginDialog({
+        appName: "クロスワード",
+        required: true
+      });
+      applyAuthResult(result);
+    } catch (error) {
+      if (error && error.reason === "login_cancelled") {
+        showLoginPrompt();
+        return;
+      }
+      showLoginPrompt(error && error.userMessage ? error.userMessage : "ログインできませんでした。");
+    }
   }
 
   async function loadCsv(path) {
@@ -164,6 +317,25 @@
         });
         return record;
       });
+  }
+
+  function prepareStudents(rows) {
+    return rows
+      .filter((row) => row.year.trim() === "1")
+      .map((row) => ({
+        uid: row.id.trim(),
+        year: row.year.trim(),
+        className: row.class.trim().toUpperCase(),
+        no: String(Number(row.no)),
+        name: row.name.trim(),
+        kana: row.kana.trim()
+      }))
+      .filter((student) => student.uid && student.className && student.no !== "NaN")
+      .sort((a, b) => (
+        Number(a.year) - Number(b.year)
+        || a.className.localeCompare(b.className)
+        || Number(a.no) - Number(b.no)
+      ));
   }
 
   function prepareTerms(rows) {
@@ -275,109 +447,10 @@
     return hash >>> 0;
   }
 
-  function renderLoginMatch() {
-    const parsedClass = parseClassValue(els.classInput.value);
-    const no = normalizeNumber(els.numberInput.value);
-
-    state.selectedStudent = null;
-    els.namePreview.textContent = "";
-    els.loginOkButton.hidden = true;
-    els.candidateList.replaceChildren();
-
-    window.clearTimeout(lookupDebounceTimer);
-    lookupRequestId += 1;
-
-    if (!parsedClass.className || !no) {
-      state.students = [];
-      state.studentsByUid = new Map();
-      return;
-    }
-
-    const requestId = lookupRequestId;
-    lookupDebounceTimer = window.setTimeout(() => {
-      runStudentLookup(requestId, parsedClass, no);
-    }, 200);
-  }
-
-  async function runStudentLookup(requestId, parsedClass, no) {
-    let matches = [];
-    try {
-      const response = await lookupStudents(parsedClass.className, no, "1");
-      matches = Array.isArray(response?.students) ? response.students : [];
-    } catch (error) {
-      if (requestId !== lookupRequestId) return;
-      console.warn("student lookup failed", error);
-      els.namePreview.textContent = "通信エラー";
-      return;
-    }
-
-    if (requestId !== lookupRequestId) {
-      return;
-    }
-
-    matches = matches
-      .filter((student) => student && student.uid && student.className)
-      .filter((student) => !parsedClass.year || student.year === parsedClass.year)
-      .sort((a, b) => (
-        Number(a.year) - Number(b.year)
-        || String(a.className).localeCompare(String(b.className))
-        || Number(a.no) - Number(b.no)
-      ));
-
-    state.students = matches;
-    state.studentsByUid = new Map(matches.map((student) => [student.uid, student]));
-    state.selectedStudent = matches[0] || null;
-
-    els.namePreview.textContent = state.selectedStudent ? state.selectedStudent.name : "";
-    els.loginOkButton.hidden = !state.selectedStudent;
-    els.candidateList.replaceChildren();
-
-    if (matches.length > 1) {
-      matches.slice(0, 8).forEach((student, index) => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = `candidate-button${index === 0 ? " is-selected" : ""}`;
-        button.textContent = `${formatClass(student)} ${student.name}`;
-        button.addEventListener("click", () => {
-          state.selectedStudent = student;
-          els.namePreview.textContent = student.name;
-          [...els.candidateList.children].forEach((child) => child.classList.remove("is-selected"));
-          button.classList.add("is-selected");
-        });
-        els.candidateList.appendChild(button);
-      });
-    }
-  }
-
-  function parseClassValue(value) {
-    const normalized = value
-      .normalize("NFKC")
-      .toUpperCase()
-      .replace(/\s+/g, "")
-      .replace("年", "");
-    const withYear = normalized.match(/^([1-9])[-_]?([A-Z])$/);
-    if (withYear) {
-      return { year: withYear[1], className: withYear[2] };
-    }
-    const classOnly = normalized.match(/^([A-Z])$/);
-    if (classOnly) {
-      return { year: "", className: classOnly[1] };
-    }
-    return { year: "", className: normalized };
-  }
-
-  function normalizeNumber(value) {
-    const numeric = value.normalize("NFKC").replace(/[^\d]/g, "");
-    return numeric ? String(Number(numeric)) : "";
-  }
-
   function startGame() {
     if (!state.selectedStudent) {
       return;
     }
-
-    window.clearTimeout(lookupDebounceTimer);
-    lookupRequestId += 1;
 
     state.currentStudent = state.selectedStudent;
     state.cursorGuideVisible = true;
@@ -386,25 +459,6 @@
     els.loginScreen.hidden = true;
     els.gameScreen.hidden = false;
     renderAll();
-    fetchRosterAndSharedState();
-  }
-
-  async function fetchRosterAndSharedState() {
-    try {
-      const response = await fetchRoster(state.currentStudent.year, state.currentStudent.className);
-      const roster = Array.isArray(response?.students) ? response.students : [];
-      if (roster.length > 0) {
-        state.students = roster;
-        state.studentsByUid = new Map(roster.map((student) => [student.uid, student]));
-      } else if (!state.studentsByUid.has(state.currentStudent.uid)) {
-        state.studentsByUid.set(state.currentStudent.uid, state.currentStudent);
-      }
-    } catch (error) {
-      console.warn("roster fetch failed", error);
-      if (!state.studentsByUid.has(state.currentStudent.uid)) {
-        state.studentsByUid.set(state.currentStudent.uid, state.currentStudent);
-      }
-    }
     fetchSharedState();
   }
 
@@ -516,7 +570,7 @@
     renderBoard();
     renderHints();
     renderCards();
-    renderChat();
+    renderRanking();
   }
 
   function renderTopBar() {
@@ -653,6 +707,7 @@
   }
 
   function renderCards() {
+    updateCardSize();
     const cards = getVisibleCards();
     const fragment = document.createDocumentFragment();
 
@@ -692,6 +747,9 @@
         if (!cell) {
           continue;
         }
+        if (state.prefilledCells.has(key)) {
+          continue;
+        }
         cards.push({
           cardKey: key,
           char: cell.answer,
@@ -705,6 +763,23 @@
     }
 
     return reconcileCardSlots(cards);
+  }
+
+  function updateCardSize() {
+    const pane = els.cardGrid.parentElement;
+    if (!pane) {
+      return;
+    }
+    const paneStyles = getComputedStyle(pane);
+    const paddingY = parseFloat(paneStyles.paddingTop) + parseFloat(paneStyles.paddingBottom);
+    const paddingX = parseFloat(paneStyles.paddingLeft) + parseFloat(paneStyles.paddingRight);
+    const availH = Math.max(0, pane.clientHeight - paddingY);
+    const availW = Math.max(0, pane.clientWidth - paddingX);
+    const gap = parseFloat(getComputedStyle(els.cardGrid).gap) || 7;
+    const byHeight = (availH - 5 * gap) / 6;
+    const byWidth = (availW - 5 * gap) / 6;
+    const size = Math.max(28, Math.floor(Math.min(byHeight, byWidth)));
+    els.cardGrid.style.setProperty("--card-size", size + "px");
   }
 
   function reconcileCardSlots(cards) {
@@ -939,12 +1014,13 @@
 
   function markWordSolved(term) {
     state.solvedWords.add(term.id);
+    state.lastSolvedAt.set(state.currentStudent.uid, new Date().toISOString());
     saveLocalProgress();
     postCorrect(term.id);
-    announceMilestones(state.currentStudent.uid, getPreviousCount(state.currentStudent.uid), state.solvedWords.size);
     state.previousCounts.set(state.currentStudent.uid, state.solvedWords.size);
     enqueueOverlay(term);
     renderTopBar();
+    renderRanking();
   }
 
   function getDisplayChar(key) {
@@ -1076,50 +1152,100 @@
     window.setTimeout(() => els.confettiLayer.replaceChildren(), 2100);
   }
 
-  function renderChat() {
-    const fragment = document.createDocumentFragment();
-    state.chatMessages.slice(-80).forEach((message) => {
-      const node = document.createElement("div");
-      node.className = `chat-message${message.uid === state.currentStudent?.uid ? " is-self" : ""}`;
-      node.textContent = `${message.name} ${message.count}問、正解！！`;
-      fragment.appendChild(node);
+  function renderRanking() {
+    if (!els.rankingList || !state.currentStudent) {
+      return;
+    }
+
+    const selfUid = state.currentStudent.uid;
+    const entries = getClassmates().map((student) => {
+      const isSelf = student.uid === selfUid;
+      const count = isSelf ? state.solvedWords.size : getRemoteCount(student.uid);
+      const lastSolvedAt = state.lastSolvedAt.get(student.uid) || "";
+      return {
+        student,
+        isSelf,
+        count,
+        lastSolvedAt,
+        name: rankingDisplayName(student)
+      };
     });
-    els.chatLog.replaceChildren(fragment);
-    els.chatLog.scrollTop = els.chatLog.scrollHeight;
-  }
 
-  function addChatMessage(uid, count) {
-    const student = state.studentsByUid.get(uid);
-    if (!student) {
-      return;
-    }
-    state.chatMessages.push({ uid, name: student.name, count });
-    renderChat();
-  }
-
-  function announceMilestones(uid, previousCount, nextCount) {
-    if (!state.currentStudent || nextCount <= previousCount) {
-      return;
-    }
-    for (
-      let milestone = Math.floor(previousCount / 10) * 10 + 10;
-      milestone <= nextCount;
-      milestone += 10
-    ) {
-      if (milestone <= 0) {
-        continue;
+    entries.sort((a, b) => {
+      if (b.count !== a.count) {
+        return b.count - a.count;
       }
-      const key = `${uid}:${milestone}`;
-      if (state.seenChatMilestones.has(key)) {
-        continue;
+      if (a.lastSolvedAt && b.lastSolvedAt) {
+        return a.lastSolvedAt.localeCompare(b.lastSolvedAt);
       }
-      state.seenChatMilestones.add(key);
-      addChatMessage(uid, milestone);
-    }
+      if (a.lastSolvedAt) {
+        return -1;
+      }
+      if (b.lastSolvedAt) {
+        return 1;
+      }
+      return Number(a.student.no) - Number(b.student.no);
+    });
+
+    const fragment = document.createDocumentFragment();
+    entries.slice(0, 10).forEach((entry, index) => {
+      const item = document.createElement("li");
+      item.className = `ranking-item${entry.isSelf ? " is-self" : ""}`;
+
+      const rank = document.createElement("span");
+      rank.className = "ranking-rank";
+      rank.textContent = `${index + 1}位`;
+
+      const name = document.createElement("span");
+      name.className = "ranking-name";
+      name.textContent = entry.name;
+
+      const meta = document.createElement("span");
+      meta.className = "ranking-meta";
+
+      const count = document.createElement("span");
+      count.className = "ranking-count";
+      count.textContent = `${entry.count}問`;
+      meta.appendChild(count);
+
+      const formatted = formatLastSolvedAt(entry.lastSolvedAt);
+      if (formatted) {
+        const time = document.createElement("span");
+        time.className = "ranking-time";
+        time.textContent = formatted;
+        meta.appendChild(time);
+      }
+
+      item.appendChild(rank);
+      item.appendChild(name);
+      item.appendChild(meta);
+      fragment.appendChild(item);
+    });
+
+    els.rankingList.replaceChildren(fragment);
   }
 
-  function getPreviousCount(uid) {
-    return state.previousCounts.has(uid) ? state.previousCounts.get(uid) : getRemoteCount(uid);
+  function rankingDisplayName(student) {
+    const displayName = state.displayNameByUid.get(student.uid) || "";
+    if (displayName) {
+      return `${student.no}:${displayName}`;
+    }
+    return student.name;
+  }
+
+  function formatLastSolvedAt(value) {
+    if (!value) {
+      return "";
+    }
+    const date = new Date(value);
+    if (isNaN(date.getTime())) {
+      return "";
+    }
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    const hh = String(date.getHours()).padStart(2, "0");
+    const mm = String(date.getMinutes()).padStart(2, "0");
+    return `${m}/${d} ${hh}:${mm}`;
   }
 
   async function fetchSharedState() {
@@ -1163,66 +1289,41 @@
     }
   }
 
-  async function lookupStudents(className, no, year) {
-    const url = getGasUrl();
-    if (!url) {
-      throw new Error("GAS URL is not configured");
-    }
-    const params = { action: "lookup", class: className, no, t: Date.now() };
-    if (year) {
-      params.year = year;
-    }
-    try {
-      return await requestJsonp(url, params);
-    } catch {
-      const response = await fetch(withParams(url, params), { cache: "no-store" });
-      if (!response.ok) {
-        throw new Error(`lookup: ${response.status}`);
-      }
-      return response.json();
-    }
-  }
-
-  async function fetchRoster(year, className) {
-    const url = getGasUrl();
-    if (!url) {
-      throw new Error("GAS URL is not configured");
-    }
-    const params = { action: "roster", year, class: className, t: Date.now() };
-    try {
-      return await requestJsonp(url, params);
-    } catch {
-      const response = await fetch(withParams(url, params), { cache: "no-store" });
-      if (!response.ok) {
-        throw new Error(`roster: ${response.status}`);
-      }
-      return response.json();
-    }
-  }
-
   function applySharedState(data) {
     const rows = Array.isArray(data) ? data : data.rows;
     if (!Array.isArray(rows)) {
       return;
     }
 
-    const shouldAnnounce = state.sharedStateInitialized;
     rows.forEach((row) => {
       const uid = String(row.uid || "").trim();
       if (!uid) {
         return;
       }
       const solved = new Set();
-      Object.entries(row).forEach(([wordId, value]) => {
-        if (wordId !== "uid" && isTruthyCell(value) && state.termsById.has(wordId)) {
-          solved.add(wordId);
+      Object.entries(row).forEach(([key, value]) => {
+        if (key === "uid") {
+          return;
+        }
+        if (key === "displayName") {
+          const dn = String(value || "").trim();
+          if (dn) {
+            state.displayNameByUid.set(uid, dn);
+          }
+          return;
+        }
+        if (key === "lastSolvedAt") {
+          const ts = String(value || "").trim();
+          if (ts) {
+            state.lastSolvedAt.set(uid, ts);
+          }
+          return;
+        }
+        if (isTruthyCell(value) && state.termsById.has(key)) {
+          solved.add(key);
         }
       });
-      const previous = state.previousCounts.has(uid) ? state.previousCounts.get(uid) : solved.size;
       state.remoteProgress.set(uid, solved);
-      if (shouldAnnounce && isClassmateUid(uid)) {
-        announceMilestones(uid, previous, solved.size);
-      }
       const localSelfCount = uid === state.currentStudent.uid ? state.solvedWords.size : 0;
       state.previousCounts.set(uid, Math.max(solved.size, localSelfCount));
     });
@@ -1245,6 +1346,7 @@
     renderTopBar();
     renderBoard();
     renderCards();
+    renderRanking();
   }
 
   function postCorrect(wordId) {
@@ -1257,6 +1359,7 @@
       uid: state.currentStudent.uid,
       wordId,
       name: state.currentStudent.name,
+      displayName: state.authUser?.displayName || "",
       year: state.currentStudent.year,
       className: state.currentStudent.className,
       no: state.currentStudent.no
@@ -1322,14 +1425,6 @@
       student.year === state.currentStudent.year
       && student.className === state.currentStudent.className
     ));
-  }
-
-  function isClassmateUid(uid) {
-    const student = state.studentsByUid.get(uid);
-    if (!student || !state.currentStudent) {
-      return false;
-    }
-    return student.year === state.currentStudent.year && student.className === state.currentStudent.className;
   }
 
   function getRemoteCount(uid) {
