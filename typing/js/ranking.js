@@ -94,6 +94,25 @@
     return map;
   }
 
+  function rosterArrayToNameMap(students) {
+    const map = {};
+    if (!Array.isArray(students)) return map;
+    students.forEach((student) => {
+      if (!student) return;
+      const uid = String(student.id || '').trim();
+      const realName = String(student.name || '').trim();
+      const number = String(student.no || '').trim();
+      const displayName = String(student.displayName || '').trim();
+      // DisplayName 空欄 → 本名 / 非空欄 → "Number:DisplayName"
+      const name = displayName
+        ? (number ? `${number}:${displayName}` : displayName)
+        : realName;
+      if (!uid || !name) return;
+      map[uid] = name;
+    });
+    return map;
+  }
+
   async function loadStudentMap() {
     try {
       const response = await fetch(STUDENT_CSV_URL, { cache: 'no-store' });
@@ -102,9 +121,22 @@
       }
       const text = await response.text();
       studentMap = parseStudentCsvMap(text);
+      return;
     } catch {
-      studentMap = {};
+      // fall through to MidoriAuth
     }
+    if (window.MidoriAuth && typeof window.MidoriAuth.fetchStudentRoster === 'function') {
+      try {
+        const result = await window.MidoriAuth.fetchStudentRoster();
+        if (result && result.ok && Array.isArray(result.students)) {
+          studentMap = rosterArrayToNameMap(result.students);
+          return;
+        }
+      } catch {
+        // ignore network errors and leave studentMap empty
+      }
+    }
+    studentMap = {};
   }
 
   function getDisplayName(item) {

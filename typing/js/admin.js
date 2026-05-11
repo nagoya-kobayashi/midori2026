@@ -212,6 +212,32 @@
     return map;
   }
 
+  function rosterArrayToStudentMap(students) {
+    const map = {};
+    if (!Array.isArray(students)) return map;
+    students.forEach((student) => {
+      if (!student) return;
+      const uid = String(student.id || '').trim();
+      if (!uid) return;
+      const classId = String(student.class || '').trim().toUpperCase();
+      const no = normalizeAttendanceNo(student.no);
+      const realName = String(student.name || '').trim();
+      const displayName = String(student.displayName || '').trim();
+      // DisplayName 空欄 → 本名 / 非空欄 → "Number:DisplayName"
+      const name = displayName
+        ? (no || no === 0 ? `${no}:${displayName}` : displayName)
+        : realName;
+      map[uid] = {
+        uid,
+        classId,
+        classRow: normalizeClassRow(classId),
+        no,
+        name
+      };
+    });
+    return map;
+  }
+
   async function loadStudentMap() {
     try {
       const response = await fetch(STUDENT_CSV_URL, { cache: 'no-store' });
@@ -222,8 +248,25 @@
       state.studentMap = parseStudentCsvMap(text);
       renderScoreRecords();
       renderAdminRankings();
+      return;
     } catch (error) {
-      addLog(`student.csv 読み込み失敗: ${error && error.message ? error.message : 'unknown error'}`);
+      // fall through to MidoriAuth
+      if (!window.MidoriAuth || typeof window.MidoriAuth.fetchStudentRoster !== 'function') {
+        addLog(`student.csv 読み込み失敗: ${error && error.message ? error.message : 'unknown error'}`);
+        return;
+      }
+    }
+    try {
+      const result = await window.MidoriAuth.fetchStudentRoster();
+      if (result && result.ok && Array.isArray(result.students)) {
+        state.studentMap = rosterArrayToStudentMap(result.students);
+        renderScoreRecords();
+        renderAdminRankings();
+        return;
+      }
+      addLog(`生徒名簿の取得に失敗しました: ${result && result.reason ? result.reason : 'unknown'}`);
+    } catch (error) {
+      addLog(`生徒名簿の取得に失敗しました: ${error && error.message ? error.message : 'network error'}`);
     }
   }
 

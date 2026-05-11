@@ -842,6 +842,9 @@
   const keyLayoutMap = new Map(KEY_LAYOUT.map(([key, x, y, w, h]) => [key, { x, y, w, h }]));
   const flashTimers = { keyActive: new Map(), keyMiss: new Map(), promptReading: null, promptRomaji: null, comboFeedback: null };
   const promptFlash = { reading: '', romaji: '' };
+  const PROMPT_TEXT_MIN_FONT_SIZE_PX = 12;
+  const PROMPT_TEXT_FIT_GUTTER_PX = 2;
+  let promptTextFitRaf = 0;
 
   function setBadge(text, cls) { els.connectionBadge.textContent = text; els.connectionBadge.className = `badge floating-status ${cls}`; }
   function setNotice(text) { els.systemNotice.textContent = text; }
@@ -1324,13 +1327,6 @@
       }
     }
     return lastResponse;
-  }
-  async function fetchOutsideStudentSelfFromGas(uid, sessionId) {
-    return fetchJsonWithRetry(() => fetchJsonWithTimeout(buildGasClientUrl({
-      mode: 'student_self',
-      uid,
-      sessionId
-    }), { method: 'GET' }, AUTH_GET_TIMEOUT_MS));
   }
   async function logoutOutsideOnGas(uid, sessionId) {
     return fetchJsonWithRetry(() => postGasJson({
@@ -1986,20 +1982,13 @@
     els.playerNameInput.value = state.player.playerName || '';
     els.classIdInput.value = state.player.classId || '';
     if (els.outsideAuthPasswordTarget) {
-      const pendingUid = String(state.outsideAuth.pendingUid || '').trim();
       const name = state.outsideAuth.pendingIdentity && state.outsideAuth.pendingIdentity.playerName
         ? state.outsideAuth.pendingIdentity.playerName
         : (state.player.playerName || '');
       const classId = state.outsideAuth.pendingIdentity && state.outsideAuth.pendingIdentity.classId
         ? state.outsideAuth.pendingIdentity.classId
         : (state.player.classId || '');
-      if (name) {
-        els.outsideAuthPasswordTarget.textContent = `${classId || '-'} ${name}`;
-      } else if (pendingUid) {
-        els.outsideAuthPasswordTarget.textContent = `ID: ${pendingUid}`;
-      } else {
-        els.outsideAuthPasswordTarget.textContent = '';
-      }
+      els.outsideAuthPasswordTarget.textContent = name ? `${classId || '-'} ${name}` : '';
     }
     els.modeChip.textContent = modeLabel();
     refreshConnectionBadge();
@@ -2294,6 +2283,11 @@
     });
     refreshLocalChatSimulation();
     syncResultActions();
+    if (next === 'playing') {
+      queuePromptTextFit();
+    } else {
+      resetPromptTextFit();
+    }
   }
   function formatRemaining(ms) {
     const total = Math.max(0, Math.ceil(ms / 1000));
@@ -2561,91 +2555,45 @@
       }
     }
   }
+  async function buildIdentityFromMidoriUser(user) {
+    const uid = String(user && user.userId || '').trim();
+    const classId = String(user && user.classId || '').trim().toUpperCase();
+    const number = String(user && user.number || '').trim();
+    const displayName = String(user && user.displayName || '').trim();
+
+    // 表示名のルール:
+    //   - DisplayName 空欄: Students 名簿の本名 (loadStudentMap で取得) を使う
+    //   - DisplayName 非空欄: "Number:DisplayName" として上書き表示
+    let playerName;
+    if (displayName) {
+      playerName = number ? `${number}:${displayName}` : displayName;
+    } else {
+      try {
+        const map = await loadStudentMap();
+        const entry = map && map[uid];
+        playerName = (entry && entry.playerName) ? String(entry.playerName) : uid;
+      } catch {
+        playerName = uid;
+      }
+    }
+
+    return {
+      uid,
+      classId,
+      classRow: deriveClassRow(classId),
+      attendanceNo: normalizeAttendanceNo(number, uid),
+      playerName,
+      playerId: `uid:${uid}`,
+      note: `共通認証 (MidoriAuth) でログインしました: ${playerName || uid}`
+    };
+  }
   async function resumeStoredOutsideSession(options = {}) {
-    const auto = Boolean(options && options.auto);
-    const activeRequestOptions = auto ? { allowReady: true } : {};
-    const stored = readOutsideSession();
-    if (!stored || !stored.uid || !stored.sessionId) {
-      clearOutsideAuthSession();
-      resetOutsideAuthState();
-      setStoredOutsideSessionDisplay(null);
-      if (auto) {
-        showOutsideAuthGate('校外オンラインです。IDとパスワードでログインしてください。');
-      } else {
-        showOutsideAuthStep('id', '保存済みセッションが見つかりません。IDを入力してください。');
-      }
-      return false;
-    }
-    const token = invalidateOutsideAuthRequests();
-    state.outsideAuth.resumingStoredSession = true;
-    if (!auto) {
-      setOutsideAuthHint(els.outsideAuthStoredHint, '保存済みセッションを確認しています。');
-    }
-    try {
-      const validation = await validateAuthSessionOnGas(stored.uid, stored.sessionId);
-      if (!isOutsideAuthRequestActive(token, activeRequestOptions)) {
-        return false;
-      }
-      if (!validation || validation.ok !== true || validation.valid !== true) {
-        clearOutsideAuthSession();
-        resetOutsideAuthState();
-        setStoredOutsideSessionDisplay(null);
-        if (auto) {
-          showOutsideAuthGate('保存済みセッションが無効です。IDとパスワードでログインしてください。');
-        } else {
-          showOutsideAuthStep('id', '保存済みセッションが無効です。IDとパスワードでログインしてください。');
-        }
-        return false;
-      }
-      const sessionId = String(validation.sessionId || stored.sessionId);
-      const studentSelf = await fetchOutsideStudentSelfFromGas(stored.uid, sessionId);
-      if (!isOutsideAuthRequestActive(token, activeRequestOptions)) {
-        return false;
-      }
-      const identity = buildIdentityFromGasStudentSelf(stored.uid, studentSelf);
-      if (!identity) {
-        clearOutsideAuthSession();
-        resetOutsideAuthState();
-        setStoredOutsideSessionDisplay(null);
-        if (auto) {
-          showOutsideAuthGate('保存済みIDの生徒情報を取得できませんでした。IDとパスワードでログインしてください。');
-        } else {
-          showOutsideAuthStep('id', '保存済みIDの生徒情報を取得できませんでした。IDを入力してください。');
-        }
-        return false;
-      }
-      mergeClassmatesIntoStudentMap(studentSelf && studentSelf.classmates);
-      state.player = identity;
-      savePlayer();
-      applyOutsideAuthSession(stored.uid, sessionId);
-      state.outsideAuth.resumingStoredSession = false;
-      resetOutsideAuthState();
-      updateIdentity();
-      setNotice(auto ? '保存済みセッションを確認しました。スペースキーで開始できます。' : '保存済みセッションを読み込みました。READY へ進みます。');
-      showReadyLanding('ready');
-      return true;
-    } catch {
-      if (!isOutsideAuthRequestActive(token, activeRequestOptions)) {
-        return false;
-      }
-      state.outsideAuth.resumingStoredSession = false;
-      if (auto) {
-        showOutsideAuthGate('保存済みセッションの確認に失敗しました。IDとパスワードでログインしてください。');
-      } else {
-        setOutsideAuthHint(els.outsideAuthStoredHint, 'セッション確認に失敗しました。再度お試しください。');
-      }
-      return false;
-    }
+    return showOutsideAuthGate('共通認証でログインしてください。');
   }
   function startAutoResumeOutsideSession(entryHint = '') {
-    const stored = readOutsideSession();
-    if (!stored || !stored.uid || !stored.sessionId) {
-      showOutsideAuthGate(entryHint || '校外オンラインです。IDとパスワードでログインしてください。');
-      return false;
-    }
     if (state.outsideAuth.resumingStoredSession) {
-      setReadyOverlay(true, 'READY', '保存済みセッションを確認しています', 'connecting');
-      setNotice('保存済みセッションを確認しています。');
+      setReadyOverlay(true, 'READY', 'ログインを確認しています', 'connecting');
+      setNotice('ログインを確認しています。');
       return true;
     }
     state.outsideAuth.active = true;
@@ -2666,35 +2614,71 @@
     updateTimeDisplay(state.config.gameDurationSec * 1000);
     updateGuide();
     els.offlineStartBtn.classList.add('hidden');
-    setReadyOverlay(true, 'READY', '保存済みセッションを確認しています', 'connecting');
-    setNotice('保存済みセッションを確認しています。');
-    resumeStoredOutsideSession({ auto: true });
+    setReadyOverlay(true, 'READY', 'ログインを確認しています', 'connecting');
+    setNotice('ログインを確認しています。');
+    showOutsideAuthGate(entryHint || '校外オンラインです。共通認証でログインしてください。');
     return true;
   }
   async function showOutsideAuthGate(entryHint = '') {
     invalidateOutsideAuthRequests();
     state.outsideAuth.active = true;
     state.outsideAuth.loggedIn = false;
-    state.outsideAuth.resumingStoredSession = false;
+    state.outsideAuth.resumingStoredSession = true;
     state.outsideAuth.uid = '';
     state.outsideAuth.sessionId = '';
     updateIdentity();
-    setReadyOverlay(false);
-    setPhase('auth');
     els.offlineStartBtn.classList.add('hidden');
     resetOutsideAuthState();
-    resetOutsideAuthUi();
-    setStoredOutsideSessionDisplay(null);
-    setNotice(entryHint || '校外オンラインです。ログインしてください。');
-    showOutsideAuthStep('id', entryHint || 'IDを入力してください。');
-    return false;
+    setNotice(entryHint || '校外オンラインです。共通認証でログインしてください。');
+    setReadyOverlay(true, 'LOGIN', '共通認証でログインしてください', 'connecting');
+
+    if (!window.MidoriAuth) {
+      setNotice('共通認証モジュールを読み込めませんでした。ページを再読み込みしてください。');
+      state.outsideAuth.resumingStoredSession = false;
+      return false;
+    }
+
+    try {
+      let result = await window.MidoriAuth.start({ appName: 'タイピング競技', appId: 'typing', authRequired: false });
+      if (!result || !result.ok || result.mode !== 'user' || !result.user) {
+        result = await window.MidoriAuth.showLoginDialog({ appName: 'タイピング競技', required: true });
+      }
+      if (!result || !result.ok || !result.user) {
+        state.outsideAuth.resumingStoredSession = false;
+        setNotice('ログインできませんでした。再読み込みしてやり直してください。');
+        return false;
+      }
+      const identity = await buildIdentityFromMidoriUser(result.user);
+      if (!identity.uid) {
+        state.outsideAuth.resumingStoredSession = false;
+        setNotice('ユーザ情報を取得できませんでした。再読み込みしてやり直してください。');
+        return false;
+      }
+      state.player = identity;
+      savePlayer();
+      applyOutsideAuthSession(identity.uid, 'midori-auth');
+      state.outsideAuth.resumingStoredSession = false;
+      resetOutsideAuthState();
+      updateIdentity();
+      setNotice('校外オンラインにログインしました。スペースキーで開始できます。');
+      showReadyLanding('ready');
+      return true;
+    } catch (error) {
+      state.outsideAuth.resumingStoredSession = false;
+      const message = error && error.userMessage ? error.userMessage : 'ログインがキャンセルされました。';
+      setNotice(`${message} 再読み込みしてやり直してください。`);
+      return false;
+    }
   }
   async function logoutOutsideSession() {
     invalidateOutsideAuthRequests();
+    if (window.MidoriAuth && typeof window.MidoriAuth.logout === 'function') {
+      try { await window.MidoriAuth.logout(); } catch {}
+    }
     clearOutsideAuthSession();
     resetOutsideAuthState();
     setNotice('この端末からログアウトしました。');
-    await showOutsideAuthGate('この端末の保存済みセッションを削除しました。IDとパスワードでログインしてください。');
+    await showOutsideAuthGate('共通認証でログインしてください。');
   }
   function showReadyLanding(mode = 'connecting') {
     let targetMode = String(mode || 'connecting');
@@ -3062,9 +3046,9 @@
     els.resultInfo.innerHTML = lines.map((line) => `<div>${escapeHtml(line)}</div>`).join('');
   }
   function shouldShowReadyOutsidePasswordPanel() {
-    if (!state.ready.active) return false;
-    if (!(state.ready.mode === 'ready' || state.ready.mode === 'ready-loading' || state.ready.mode === 'server-wait')) return false;
-    return Boolean(state.serverAvailable && state.player.uid && canUseClientGas());
+    // 校外アクセス用パスワードは共通認証 (MidoriAuth) に移行済みのため、
+    // 本アプリ側のパスワード設定 UI は表示しない。
+    return false;
   }
   function hideReadyOutsidePasswordPanel() {
     if (!els.readyOutsidePasswordPanel) return;
@@ -3132,22 +3116,9 @@
     }
   }
   async function refreshResultOutsidePasswordPanel() {
-    if (!state.serverAvailable || !state.player.uid || !canUseClientGas() || state.phase !== 'result') {
-      hideResultOutsidePasswordPanel();
-      return;
-    }
-    setResultOutsidePasswordPanelConfigured(false, '設定状態を確認しています。');
-    try {
-      const status = await fetchAuthStatusFromGas(state.player.uid);
-      const configured = Boolean(status && status.ok === true && status.configured === true);
-      if (configured) {
-        setResultOutsidePasswordPanelConfigured(true, '');
-      } else {
-        setResultOutsidePasswordPanelConfigured(false, '校外アクセスで使うパスワードを設定してください。');
-      }
-    } catch {
-      setResultOutsidePasswordPanelConfigured(false, '状態確認に失敗しました。再度お試しください。');
-    }
+    // 校外アクセス用パスワードは共通認証 (MidoriAuth) に移行済みのため、
+    // 結果画面側のパスワード設定 UI は常時非表示にする。
+    hideResultOutsidePasswordPanel();
   }
   function setResultHeatGauge(maxCombo) {
     if (!els.resultHeatFill) return;
@@ -3672,11 +3643,41 @@
     restartBodyAnimation('miss-shake', 420);
     state.inputLock.timer = setTimeout(() => unlockMissLock(), 2000);
   }
+  function resetPromptTextFit() {
+    if (!els.promptText) return;
+    els.promptText.style.fontSize = '';
+    els.promptText.dataset.fit = 'false';
+  }
+  function fitPromptTextToWidth() {
+    promptTextFitRaf = 0;
+    const node = els.promptText;
+    if (!node) return;
+    node.style.fontSize = '';
+    node.dataset.fit = 'false';
+    if (state.phase !== 'playing') return;
+    const text = String(node.textContent || '').trim();
+    if (!text || text === '-') return;
+    const availableWidth = Math.floor(node.clientWidth);
+    if (availableWidth <= 0) return;
+    const fullWidth = Math.ceil(node.scrollWidth);
+    if (fullWidth <= availableWidth) return;
+    const baseFontSize = Number.parseFloat(window.getComputedStyle(node).fontSize);
+    if (!Number.isFinite(baseFontSize) || baseFontSize <= 0) return;
+    const targetWidth = Math.max(1, availableWidth - PROMPT_TEXT_FIT_GUTTER_PX);
+    const fittedFontSize = Math.max(PROMPT_TEXT_MIN_FONT_SIZE_PX, baseFontSize * Math.min(1, targetWidth / fullWidth));
+    node.style.fontSize = `${fittedFontSize.toFixed(2)}px`;
+    node.dataset.fit = 'true';
+  }
+  function queuePromptTextFit() {
+    if (promptTextFitRaf) cancelAnimationFrame(promptTextFitRaf);
+    promptTextFitRaf = requestAnimationFrame(fitPromptTextToWidth);
+  }
   function updatePromptProgress(prompt, session, displayGuide = getDisplayGuide(prompt.reading, session.getTyped())) {
     const readingState = buildReadingSegments(prompt.reading, session.getTyped());
     const readingDisplay = splitPromptFlash(readingState.typed, promptFlash.reading);
     const romajiDisplay = splitPromptFlash(displayGuide.typed, promptFlash.romaji);
     els.promptText.textContent = prompt.text;
+    queuePromptTextFit();
     els.readingTyped.textContent = readingDisplay.stable;
     els.readingFlash.textContent = readingDisplay.flash;
     els.readingCurrent.textContent = readingState.current;
@@ -3803,6 +3804,7 @@
       keyElements.forEach((node) => node.classList.remove('key-next', 'key-next-alert', 'key-miss-lock'));
       if (!state.game || !state.game.session) {
       els.promptText.textContent = '-';
+      resetPromptTextFit();
       els.readingTyped.textContent = '';
       els.readingFlash.textContent = '';
       els.readingCurrent.textContent = '-';
@@ -4250,49 +4252,6 @@
     }
     return 0;
   }
-  function mergeClassmatesIntoStudentMap(classmates) {
-    const list = Array.isArray(classmates) ? classmates : [];
-    if (!list.length) {
-      return getCachedStudentMap();
-    }
-    const baseMap = { ...getCachedStudentMap() };
-    list.forEach((entry) => {
-      const uid = String(entry && entry.uid || '').trim();
-      const playerName = String(entry && entry.name || '').trim();
-      if (!uid || !playerName) return;
-      const classRaw = String(entry && entry.classId || '').trim();
-      const classId = classRaw ? classRaw.toUpperCase() : '';
-      const attendanceNo = String(entry && entry.no !== undefined && entry.no !== null ? entry.no : '').trim();
-      baseMap[uid] = {
-        classId,
-        playerName,
-        attendanceNo
-      };
-    });
-    cacheStudents(baseMap);
-    cachedStudentMap = baseMap;
-    return baseMap;
-  }
-  function buildIdentityFromGasStudentSelf(uid, response) {
-    const safeUid = String(uid || '').trim();
-    if (!safeUid || !response || response.ok !== true || !response.self) {
-      return null;
-    }
-    const self = response.self;
-    const classRaw = String(self.classId || '').trim();
-    const classId = classRaw ? classRaw.toUpperCase() : '';
-    const playerName = String(self.name || '').trim();
-    if (!classId || !playerName) return null;
-    return {
-      uid: safeUid,
-      classId,
-      classRow: deriveClassRow(classId),
-      attendanceNo: normalizeAttendanceNo(self.no, safeUid),
-      playerName,
-      playerId: `uid:${safeUid}`,
-      note: `uid=${safeUid} を GAS 経由で読み込みました。`
-    };
-  }
   function cacheStudents(map) { localStorage.setItem(STUDENT_CACHE_KEY, JSON.stringify(map)); }
   function readStudentCache() { try { return JSON.parse(localStorage.getItem(STUDENT_CACHE_KEY) || '{}'); } catch { return {}; } }
   function getCachedStudentMap() {
@@ -4338,6 +4297,34 @@
     });
     return map;
   }
+  function rosterArrayToStudentMap(students) {
+    const map = {};
+    if (!Array.isArray(students)) return map;
+    students.forEach((student) => {
+      if (!student) return;
+      const uid = String(student.id || '').trim();
+      const classId = String(student.class || '').trim().toUpperCase();
+      const realName = String(student.name || '').trim();
+      const number = String(student.no || '').trim();
+      const displayName = String(student.displayName || '').trim();
+      // 表示名のルール (buildIdentityFromMidoriUser と同じ):
+      //   DisplayName 空欄 → Students シートの本名
+      //   DisplayName 非空欄 → "Number:DisplayName" 上書き
+      let playerName;
+      if (displayName) {
+        playerName = number ? `${number}:${displayName}` : displayName;
+      } else {
+        playerName = realName;
+      }
+      if (!uid || !classId || !playerName) return;
+      map[uid] = {
+        classId,
+        playerName,
+        attendanceNo: number
+      };
+    });
+    return map;
+  }
   async function loadStudentMap() {
     try {
       const response = await fetch(STUDENT_CSV_URL, { cache: 'no-store' });
@@ -4350,6 +4337,21 @@
       cachedStudentMap = map;
       return map;
     } catch {
+      // student.csv が取得できないのは校外アクセス。MidoriAuth でログイン済みなら
+      // 共通認証 GAS から生徒名簿を取り、なければキャッシュへフォールバック。
+      if (window.MidoriAuth && typeof window.MidoriAuth.fetchStudentRoster === 'function') {
+        try {
+          const result = await window.MidoriAuth.fetchStudentRoster();
+          if (result && result.ok && Array.isArray(result.students)) {
+            const map = rosterArrayToStudentMap(result.students);
+            cacheStudents(map);
+            cachedStudentMap = map;
+            return map;
+          }
+        } catch {
+          // ネットワーク障害等は無視してキャッシュへ
+        }
+      }
       const fallbackMap = readStudentCache();
       cachedStudentMap = fallbackMap;
       return fallbackMap;
@@ -4462,25 +4464,25 @@
     const token = invalidateOutsideAuthRequests();
     setOutsideAuthHint(els.outsideAuthIdHint, 'IDを確認しています。初回は最大30秒ほどかかります。');
     try {
+      const identity = await resolveIdentityByUid(uid, { strict: true });
+      if (!isOutsideAuthRequestActive(token)) {
+        return;
+      }
+      if (!identity) {
+        setOutsideAuthHint(els.outsideAuthIdHint, 'IDが見つかりません。確認してください。');
+        return;
+      }
       const saltResponse = await fetchAuthSaltFromGas(uid);
       if (!isOutsideAuthRequestActive(token)) {
         return;
       }
-      if (!saltResponse || saltResponse.ok !== true) {
-        setOutsideAuthHint(els.outsideAuthIdHint, 'IDの確認に失敗しました。時間をおいて再度お試しください。');
-        return;
-      }
-      if (saltResponse.exists === false) {
-        setOutsideAuthHint(els.outsideAuthIdHint, 'IDが見つかりません。確認してください。');
-        return;
-      }
-      if (saltResponse.configured !== true || !saltResponse.salt) {
+      if (!saltResponse || saltResponse.ok !== true || saltResponse.configured !== true || !saltResponse.salt) {
         setOutsideAuthHint(els.outsideAuthIdHint, '校外アクセス用パスワードが未設定です。校内で設定してください。');
         return;
       }
       state.outsideAuth.pendingUid = uid;
       state.outsideAuth.pendingSalt = String(saltResponse.salt || '');
-      state.outsideAuth.pendingIdentity = null;
+      state.outsideAuth.pendingIdentity = identity;
       updateIdentity();
       showOutsideAuthStep('password', 'パスワードを入力してください。');
     } catch (error) {
@@ -4497,8 +4499,9 @@
     event.preventDefault();
     const uid = String(state.outsideAuth.pendingUid || '').trim();
     const salt = String(state.outsideAuth.pendingSalt || '').trim();
+    const identity = state.outsideAuth.pendingIdentity;
     const password = String(els.outsideAuthPasswordInput.value || '');
-    if (!uid || !salt) {
+    if (!uid || !salt || !identity) {
       showOutsideAuthStep('id', '先にIDを入力してください。');
       return;
     }
@@ -4517,19 +4520,7 @@
         setOutsideAuthHint(els.outsideAuthPasswordHint, 'ログインに失敗しました。IDまたはパスワードを確認してください。');
         return;
       }
-      const sessionId = String(login.sessionId || '');
-      setOutsideAuthHint(els.outsideAuthPasswordHint, '生徒情報を取得しています。');
-      const studentSelf = await fetchOutsideStudentSelfFromGas(uid, sessionId);
-      if (!isOutsideAuthRequestActive(token)) {
-        return;
-      }
-      const identity = buildIdentityFromGasStudentSelf(uid, studentSelf);
-      if (!identity) {
-        setOutsideAuthHint(els.outsideAuthPasswordHint, '生徒情報の取得に失敗しました。再度お試しください。');
-        return;
-      }
-      mergeClassmatesIntoStudentMap(studentSelf && studentSelf.classmates);
-      applyOutsideAuthSession(uid, sessionId);
+      applyOutsideAuthSession(uid, String(login.sessionId || ''));
       state.player = identity;
       savePlayer();
       resetOutsideAuthState();
@@ -4879,7 +4870,13 @@
       syncReadySettingsUi();
     });
     document.addEventListener('keydown', onKeydown);
-    window.addEventListener('resize', () => positionFingerDots());
+    window.addEventListener('resize', () => {
+      positionFingerDots();
+      queuePromptTextFit();
+    });
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(queuePromptTextFit).catch(() => {});
+    }
     window.addEventListener('pageshow', (event) => {
       if (!event.persisted) return;
       resetConnectionRuntimeForReentry();
