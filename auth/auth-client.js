@@ -185,7 +185,7 @@
 
   async function login(userId, password, options) {
     var loginOptions = options || {};
-    var normalizedUserId = String(userId || "").trim();
+    var normalizedUserId = String(userId || "").trim().toLowerCase();
     if (!normalizedUserId || !password) {
       throw authError("auth_failed", "ユーザIDとパスワードを入力してください。");
     }
