@@ -2561,20 +2561,26 @@
     const number = String(user && user.number || '').trim();
     const displayName = String(user && user.displayName || '').trim();
 
+    // 校外モードでは student.csv が無いため、ログイン直後に必ず名簿をロードして
+    // cachedStudentMap を埋める。これがないとチャット (getDisplayNameFromSnapshotRecord)
+    // でクラスメイトの本名が引けず、UID フォールバックになる。
+    // 本人の DisplayName 有無に関係なく必要。
+    let map = {};
+    try {
+      map = await loadStudentMap() || {};
+    } catch {
+      map = {};
+    }
+
     // 表示名のルール:
-    //   - DisplayName 空欄: Students 名簿の本名 (loadStudentMap で取得) を使う
+    //   - DisplayName 空欄: Students 名簿の本名を使う
     //   - DisplayName 非空欄: "Number:DisplayName" として上書き表示
     let playerName;
     if (displayName) {
       playerName = number ? `${number}:${displayName}` : displayName;
     } else {
-      try {
-        const map = await loadStudentMap();
-        const entry = map && map[uid];
-        playerName = (entry && entry.playerName) ? String(entry.playerName) : uid;
-      } catch {
-        playerName = uid;
-      }
+      const entry = map && map[uid];
+      playerName = (entry && entry.playerName) ? String(entry.playerName) : uid;
     }
 
     return {
