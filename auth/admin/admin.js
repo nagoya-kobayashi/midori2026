@@ -224,8 +224,7 @@
     try {
       var loggedIn = await MidoriAuth.login(
         elements.loginUserId.value,
-        elements.loginPassword.value,
-        { deviceName: "auth-admin" }
+        elements.loginPassword.value
       );
       elements.loginPassword.value = "";
       if (loggedIn.user.role !== "admin") {
@@ -406,7 +405,6 @@
       tr.appendChild(td(session.sessionId));
       tr.appendChild(td(session.userId));
       tr.appendChild(td(session.deviceId));
-      tr.appendChild(td(session.deviceName));
       tr.appendChild(td(session.createdAt));
       tr.appendChild(td(session.lastUsedAt));
       tr.appendChild(td(session.expiresAt || "無期限"));

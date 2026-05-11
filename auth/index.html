@@ -59,10 +59,6 @@
             パスワード
             <input id="loginPassword" name="password" type="password" autocomplete="current-password" required />
           </label>
-          <label>
-            端末名
-            <input id="deviceName" name="deviceName" type="text" autocomplete="off" />
-          </label>
           <div class="button-row">
             <button class="primary" type="submit">ログイン</button>
             <button class="danger" type="button" id="logoutButton">ログアウト</button>
@@ -97,7 +93,6 @@
           loginForm: document.getElementById("loginForm"),
           loginUserId: document.getElementById("loginUserId"),
           loginPassword: document.getElementById("loginPassword"),
-          deviceName: document.getElementById("deviceName"),
           logoutButton: document.getElementById("logoutButton"),
           loginMessage: document.getElementById("loginMessage"),
           verifyButton: document.getElementById("verifyButton"),
@@ -114,7 +109,6 @@
         elements.healthButton.addEventListener("click", handleHealth);
 
         async function boot() {
-          elements.deviceName.value = MidoriAuth.getDeviceName();
           elements.deviceIdText.textContent = MidoriAuth.getDeviceId();
           elements.configNotice.hidden = !isEndpointPlaceholder();
 
@@ -150,13 +144,7 @@
           event.preventDefault();
           setMessage("ログインを確認しています。", "");
           try {
-            localStorage.setItem(
-              MIDORI_AUTH_CONFIG.STORAGE_PREFIX + "deviceName",
-              elements.deviceName.value || MIDORI_AUTH_CONFIG.DEFAULT_DEVICE_NAME
-            );
-            var result = await MidoriAuth.login(elements.loginUserId.value, elements.loginPassword.value, {
-              deviceName: elements.deviceName.value,
-            });
+            var result = await MidoriAuth.login(elements.loginUserId.value, elements.loginPassword.value);
             elements.loginPassword.value = "";
             renderStatus(result);
             setMessage("ログインしました。", "ok");

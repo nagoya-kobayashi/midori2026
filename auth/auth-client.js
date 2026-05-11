@@ -9,7 +9,6 @@
     PASSWORD_HASH_ITERATIONS: 100000,
     ONE_TIME_TICKET_PARAM: "ticket",
     RETURN_TO_PARAM: "returnTo",
-    DEFAULT_DEVICE_NAME: "browser",
   };
 
   var DEFAULT_OPTIONS = {
@@ -76,7 +75,6 @@
     state.config = merge(DEFAULT_CONFIG, window.MIDORI_AUTH_CONFIG || {}, options && options.config);
     state.options = merge(DEFAULT_OPTIONS, options || {});
     getDeviceId();
-    getDeviceName();
     return MidoriAuth;
   }
 
@@ -194,7 +192,8 @@
 
     var saltResponse = await post("getSalt", { userId: normalizedUserId });
     if (!saltResponse.ok || !saltResponse.salt) {
-      throw authError(saltResponse.error || "auth_failed", "ユーザIDまたはパスワードを確認してください。");
+      var saltErr = saltResponse.error || "auth_failed";
+      throw authError(saltErr, "ユーザIDまたはパスワードを確認してください。 (" + saltErr + ")");
     }
 
     var passwordHash = await hashPassword(password, saltResponse.salt);
@@ -202,21 +201,26 @@
     // 旧タイピングシステムから移行したユーザは、LegacySalt/LegacyPasswordHash で認証する。
     // 新形式と旧形式 (sha256(password+salt) の hex) を両方送り、サーバ側でいずれかが
     // 一致すれば認証成功。一致した時点でサーバが新ハッシュを保存して旧フィールドをクリアする。
+    //
+    // legacyPasswordHashFallback: 旧 typing の `sha256HexLegacyFallback` で計算・保存された
+    // 「バグ版 SHA-256」ハッシュとの互換用。typing 側でも login 時に正規版とバグ版の両方を
+    // 試して片方が通れば成功扱いだったため、auth でも同等に両方送る。
     var loginParams = {
       userId: normalizedUserId,
       passwordHash: passwordHash,
       deviceId: getDeviceId(),
-      deviceName: loginOptions.deviceName || getDeviceName(),
     };
     if (saltResponse.legacyMode && saltResponse.legacySalt) {
       loginParams.legacyPasswordHash = legacyHashHex(password, saltResponse.legacySalt);
+      loginParams.legacyPasswordHashFallback = legacyHashHexBuggy(password, saltResponse.legacySalt);
     }
 
     var response = await post("login", loginParams);
 
     if (!response.ok || !response.loginToken) {
       clearStoredSession();
-      throw authError(response.error || "auth_failed", "ログインできませんでした。");
+      var loginErr = response.error || "auth_failed";
+      throw authError(loginErr, "ログインできませんでした。 (" + loginErr + ")");
     }
 
     saveSession(normalizedUserId, response.loginToken, response.user);
@@ -318,9 +322,6 @@
       var passwordLabel = labelWithInput("パスワード", "password", "current-password");
       passwordLabel.input.autocomplete = "current-password";
 
-      var deviceLabel = labelWithInput("端末名", "text", "off");
-      deviceLabel.input.value = getDeviceName();
-
       var errorBox = document.createElement("div");
       errorBox.className = "midori-auth-dialog-error";
       errorBox.setAttribute("aria-live", "polite");
@@ -341,7 +342,6 @@
       actions.appendChild(cancelButton);
       form.appendChild(userLabel.label);
       form.appendChild(passwordLabel.label);
-      form.appendChild(deviceLabel.label);
       form.appendChild(errorBox);
       form.appendChild(actions);
 
@@ -369,10 +369,7 @@
         loginButton.textContent = "確認中...";
 
         try {
-          safeLocalStorageSet(storageKey("deviceName"), deviceLabel.input.value || getDeviceName());
-          var result = await login(userLabel.input.value, passwordLabel.input.value, {
-            deviceName: deviceLabel.input.value || getDeviceName(),
-          });
+          var result = await login(userLabel.input.value, passwordLabel.input.value);
           passwordLabel.input.value = "";
           close();
           state.lastResult = result;
@@ -422,7 +419,6 @@
       var response = await post("consumeOneTimeTicket", {
         ticket: ticket,
         deviceId: getDeviceId(),
-        deviceName: getDeviceName(),
       });
 
       if (!response.ok || !response.loginToken) {
@@ -449,24 +445,11 @@
     return id;
   }
 
-  function getDeviceName() {
-    var key = storageKey("deviceName");
-    var existing = safeLocalStorageGet(key);
-    if (existing) {
-      return existing;
-    }
-
-    var name = state.config.DEFAULT_DEVICE_NAME || "browser";
-    safeLocalStorageSet(key, name);
-    return name;
-  }
-
   function getStoredSession() {
     return {
       userId: safeLocalStorageGet(storageKey("userId")) || "",
       loginToken: safeLocalStorageGet(storageKey("loginToken")) || "",
       deviceId: getDeviceId(),
-      deviceName: getDeviceName(),
     };
   }
 
@@ -728,15 +711,74 @@
   // 旧タイピングシステム互換のハッシュ。sha256(password + salt) を hex 小文字で返す。
   // dual-hash ログイン（移行直後の初回ログイン）でのみ使う。
   function legacyHashHex(password, salt) {
-    var encoder = new TextEncoder();
-    var input = encoder.encode(String(password) + String(salt));
+    return sha256Hex(String(password) + String(salt));
+  }
+
+  // 旧タイピングシステムの `sha256HexLegacyFallback` 互換のハッシュ。
+  // 旧 typing は SHA-256 のメッセージ末尾に付ける 64bit 長を `bitLength >>> (i*8)` for i=7..0
+  // で書いていたが、JS の `>>>` は右オペランドを `n & 31` で扱う仕様のため、上位4バイトに
+  // 「下位4バイトと同じ値」が入る非標準ハッシュになっていた。これで生成されたパスワード
+  // ハッシュ（s26b00 等の旧データ）に対する後方互換のため、auth でもバグ版を併送する。
+  function legacyHashHexBuggy(password, salt) {
+    return sha256HexBuggy(String(password) + String(salt));
+  }
+
+  // 任意の文字列を SHA-256 で hex 小文字に変換する。
+  // 校内HTTP (secure context 外) でも純JS実装で動くので、診断用スニペットでも安全に使える。
+  function sha256Hex(text) {
+    var input = new TextEncoder().encode(String(text == null ? "" : text));
     var digest = sha256Bytes(input);
+    return bytesToHex(digest);
+  }
+
+  // バグ版 SHA-256 (旧 typing の sha256HexLegacyFallback と bit-for-bit 一致)。
+  // 通常用途では絶対に使わないこと。LegacyPasswordHash 互換性検証専用。
+  function sha256HexBuggy(text) {
+    var input = new TextEncoder().encode(String(text == null ? "" : text));
+    var digest = sha256BytesBuggy(input);
+    return bytesToHex(digest);
+  }
+
+  function bytesToHex(digest) {
     var hex = "";
     for (var i = 0; i < digest.length; i += 1) {
       var byte = digest[i];
       hex += (byte < 16 ? "0" : "") + byte.toString(16);
     }
     return hex;
+  }
+
+  // バグ版 SHA-256 (旧 typing 互換)。詳細は legacyHashHexBuggy のコメント参照。
+  // 末尾長の 8 バイトに、上位4バイト・下位4バイトとも `bitLen` の下位4バイト値が入る。
+  function sha256BytesBuggy(input) {
+    var stateArr = sha256InitialState();
+    var msgLen = input.length;
+    var bitLen = msgLen * 8;
+    var paddedLen = ((msgLen + 9 + 63) >>> 6) << 6;
+    var padded = new Uint8Array(paddedLen);
+    padded.set(input);
+    padded[msgLen] = 0x80;
+    // 上位4バイト (本来0): JS の >>> の仕様で下位4バイトと同じ値になる。
+    padded[paddedLen - 8] = (bitLen >>> 24) & 0xff;
+    padded[paddedLen - 7] = (bitLen >>> 16) & 0xff;
+    padded[paddedLen - 6] = (bitLen >>> 8) & 0xff;
+    padded[paddedLen - 5] = bitLen & 0xff;
+    // 下位4バイト (本来の長さ位置)。
+    padded[paddedLen - 4] = (bitLen >>> 24) & 0xff;
+    padded[paddedLen - 3] = (bitLen >>> 16) & 0xff;
+    padded[paddedLen - 2] = (bitLen >>> 8) & 0xff;
+    padded[paddedLen - 1] = bitLen & 0xff;
+    for (var off = 0; off < paddedLen; off += 64) {
+      sha256CompressBlock(stateArr, padded, off);
+    }
+    var out = new Uint8Array(32);
+    for (var i = 0; i < 8; i += 1) {
+      out[i * 4] = (stateArr[i] >>> 24) & 0xff;
+      out[i * 4 + 1] = (stateArr[i] >>> 16) & 0xff;
+      out[i * 4 + 2] = (stateArr[i] >>> 8) & 0xff;
+      out[i * 4 + 3] = stateArr[i] & 0xff;
+    }
+    return out;
   }
 
   function uint8ArrayToBase64(bytes) {
@@ -997,10 +1039,13 @@
     showLoginDialog: showLoginDialog,
     consumeOneTimeTicketIfPresent: consumeOneTimeTicketIfPresent,
     getDeviceId: getDeviceId,
-    getDeviceName: getDeviceName,
     getStoredSession: getStoredSession,
     clearStoredSession: clearStoredSession,
     hashPassword: hashPassword,
+    sha256Hex: sha256Hex,
+    sha256HexBuggy: sha256HexBuggy,
+    legacyHashHex: legacyHashHex,
+    legacyHashHexBuggy: legacyHashHexBuggy,
     fetchStudentRoster: fetchStudentRoster,
     post: post,
   };

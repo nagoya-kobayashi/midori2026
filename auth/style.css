@@ -107,6 +107,35 @@ label {
   font-weight: 700;
 }
 
+label.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+label.check input {
+  width: auto;
+}
+
+.hint {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.hint code {
+  background: #eef2f7;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+input:disabled {
+  background: #f1f5f9;
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
 input {
   width: 100%;
   border: 1px solid #aab4c1;
