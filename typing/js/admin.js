@@ -238,35 +238,53 @@
     return map;
   }
 
+  function hasMidoriAuthSession() {
+    if (!window.MidoriAuth || typeof window.MidoriAuth.getStoredSession !== 'function') return false;
+    try {
+      const session = window.MidoriAuth.getStoredSession();
+      return Boolean(session && session.userId && session.loginToken);
+    } catch {
+      return false;
+    }
+  }
   async function loadStudentMap() {
+    // 校外モード (MidoriAuth ログイン済) では student.csv を「存在しないもの」として扱う。
+    if (hasMidoriAuthSession() && window.MidoriAuth && typeof window.MidoriAuth.fetchStudentRoster === 'function') {
+      try {
+        const result = await window.MidoriAuth.fetchStudentRoster();
+        if (result && result.ok && Array.isArray(result.students) && result.students.length > 0) {
+          const map = rosterArrayToStudentMap(result.students);
+          if (Object.keys(map).length > 0) {
+            state.studentMap = map;
+            renderScoreRecords();
+            renderAdminRankings();
+            return;
+          }
+        }
+        if (result && result.reason) {
+          addLog(`生徒名簿 (MidoriAuth) 取得結果: ${result.reason}`);
+        }
+      } catch (error) {
+        addLog(`生徒名簿 (MidoriAuth) 取得失敗: ${error && error.message ? error.message : 'network error'}`);
+      }
+      return;
+    }
     try {
       const response = await fetch(STUDENT_CSV_URL, { cache: 'no-store' });
       if (!response.ok) {
         throw new Error(`student.csv HTTP ${response.status}`);
       }
       const text = await response.text();
-      state.studentMap = parseStudentCsvMap(text);
-      renderScoreRecords();
-      renderAdminRankings();
-      return;
-    } catch (error) {
-      // fall through to MidoriAuth
-      if (!window.MidoriAuth || typeof window.MidoriAuth.fetchStudentRoster !== 'function') {
-        addLog(`student.csv 読み込み失敗: ${error && error.message ? error.message : 'unknown error'}`);
-        return;
-      }
-    }
-    try {
-      const result = await window.MidoriAuth.fetchStudentRoster();
-      if (result && result.ok && Array.isArray(result.students)) {
-        state.studentMap = rosterArrayToStudentMap(result.students);
+      const map = parseStudentCsvMap(text);
+      if (Object.keys(map).length > 0) {
+        state.studentMap = map;
         renderScoreRecords();
         renderAdminRankings();
         return;
       }
-      addLog(`生徒名簿の取得に失敗しました: ${result && result.reason ? result.reason : 'unknown'}`);
+      addLog(`student.csv が空のため、名簿を読み込めませんでした。`);
     } catch (error) {
-      addLog(`生徒名簿の取得に失敗しました: ${error && error.message ? error.message : 'network error'}`);
+      addLog(`student.csv 読み込み失敗: ${error && error.message ? error.message : 'unknown error'}`);
     }
   }
 

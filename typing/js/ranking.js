@@ -113,30 +113,48 @@
     return map;
   }
 
+  function hasMidoriAuthSession() {
+    if (!window.MidoriAuth || typeof window.MidoriAuth.getStoredSession !== 'function') return false;
+    try {
+      const session = window.MidoriAuth.getStoredSession();
+      return Boolean(session && session.userId && session.loginToken);
+    } catch {
+      return false;
+    }
+  }
   async function loadStudentMap() {
+    // 校外モード (MidoriAuth ログイン済) では student.csv を「存在しないもの」として扱う。
+    if (hasMidoriAuthSession() && window.MidoriAuth && typeof window.MidoriAuth.fetchStudentRoster === 'function') {
+      try {
+        const result = await window.MidoriAuth.fetchStudentRoster();
+        if (result && result.ok && Array.isArray(result.students) && result.students.length > 0) {
+          const map = rosterArrayToNameMap(result.students);
+          if (Object.keys(map).length > 0) {
+            studentMap = map;
+            return;
+          }
+        }
+      } catch {
+        // ignore
+      }
+      studentMap = studentMap || {};
+      return;
+    }
     try {
       const response = await fetch(STUDENT_CSV_URL, { cache: 'no-store' });
       if (!response.ok) {
         throw new Error(`student.csv HTTP ${response.status}`);
       }
       const text = await response.text();
-      studentMap = parseStudentCsvMap(text);
-      return;
-    } catch {
-      // fall through to MidoriAuth
-    }
-    if (window.MidoriAuth && typeof window.MidoriAuth.fetchStudentRoster === 'function') {
-      try {
-        const result = await window.MidoriAuth.fetchStudentRoster();
-        if (result && result.ok && Array.isArray(result.students)) {
-          studentMap = rosterArrayToNameMap(result.students);
-          return;
-        }
-      } catch {
-        // ignore network errors and leave studentMap empty
+      const map = parseStudentCsvMap(text);
+      if (Object.keys(map).length > 0) {
+        studentMap = map;
+        return;
       }
+    } catch {
+      // fall through
     }
-    studentMap = {};
+    studentMap = studentMap || {};
   }
 
   function getDisplayName(item) {

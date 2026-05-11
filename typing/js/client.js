@@ -4261,11 +4261,17 @@
   function cacheStudents(map) { localStorage.setItem(STUDENT_CACHE_KEY, JSON.stringify(map)); }
   function readStudentCache() { try { return JSON.parse(localStorage.getItem(STUDENT_CACHE_KEY) || '{}'); } catch { return {}; } }
   function getCachedStudentMap() {
-    if (cachedStudentMap && typeof cachedStudentMap === 'object') {
+    // 空 object {} は「未取得」と同等に扱い、localStorage を試す。
+    // (旧コードでは empty object もキャッシュ済み扱いになっていて
+    // 校外モード初回で UID 表示にスタックする原因になっていた)
+    if (cachedStudentMap && typeof cachedStudentMap === 'object' && Object.keys(cachedStudentMap).length > 0) {
       return cachedStudentMap;
     }
-    cachedStudentMap = readStudentCache();
-    return cachedStudentMap;
+    const cached = readStudentCache();
+    if (cached && typeof cached === 'object' && Object.keys(cached).length > 0) {
+      cachedStudentMap = cached;
+    }
+    return cached || {};
   }
   function parseStudentCsvMap(text) {
     const lines = String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
@@ -4331,7 +4337,46 @@
     });
     return map;
   }
+  function hasMidoriAuthSession() {
+    if (!window.MidoriAuth || typeof window.MidoriAuth.getStoredSession !== 'function') return false;
+    try {
+      const session = window.MidoriAuth.getStoredSession();
+      return Boolean(session && session.userId && session.loginToken);
+    } catch {
+      return false;
+    }
+  }
   async function loadStudentMap() {
+    // 校外モード (= MidoriAuth でログイン済) のときは student.csv を「存在しないもの」
+    // として扱う (個人情報保護の方針)。MidoriAuth GAS の名簿のみを使う。
+    if (hasMidoriAuthSession() && window.MidoriAuth && typeof window.MidoriAuth.fetchStudentRoster === 'function') {
+      try {
+        const result = await window.MidoriAuth.fetchStudentRoster();
+        if (result && result.ok && Array.isArray(result.students) && result.students.length > 0) {
+          const map = rosterArrayToStudentMap(result.students);
+          if (Object.keys(map).length > 0) {
+            cacheStudents(map);
+            cachedStudentMap = map;
+            console.log('[typing] loaded roster from MidoriAuth:', Object.keys(map).length, 'students');
+            return map;
+          }
+          console.warn('[typing] MidoriAuth roster returned but rosterArrayToStudentMap produced empty map. First student:', result.students[0]);
+        } else {
+          console.warn('[typing] MidoriAuth.fetchStudentRoster returned non-ok or empty:', result);
+        }
+      } catch (err) {
+        console.warn('[typing] MidoriAuth.fetchStudentRoster threw:', err);
+      }
+      // 校外モードでは CSV にフォールバックしない (個人情報保護)。
+      // localStorage キャッシュだけを最後の手段にする。
+      const cached = readStudentCache();
+      if (Object.keys(cached).length > 0) {
+        cachedStudentMap = cached;
+        console.log('[typing] using cached roster from localStorage:', Object.keys(cached).length, 'students');
+      }
+      return cached;
+    }
+    // 校内モード (MidoriAuth セッション無し) では student.csv を直接 fetch する。
     try {
       const response = await fetch(STUDENT_CSV_URL, { cache: 'no-store' });
       if (!response.ok) {
@@ -4339,29 +4384,19 @@
       }
       const text = await response.text();
       const map = parseStudentCsvMap(text);
-      cacheStudents(map);
-      cachedStudentMap = map;
-      return map;
-    } catch {
-      // student.csv が取得できないのは校外アクセス。MidoriAuth でログイン済みなら
-      // 共通認証 GAS から生徒名簿を取り、なければキャッシュへフォールバック。
-      if (window.MidoriAuth && typeof window.MidoriAuth.fetchStudentRoster === 'function') {
-        try {
-          const result = await window.MidoriAuth.fetchStudentRoster();
-          if (result && result.ok && Array.isArray(result.students)) {
-            const map = rosterArrayToStudentMap(result.students);
-            cacheStudents(map);
-            cachedStudentMap = map;
-            return map;
-          }
-        } catch {
-          // ネットワーク障害等は無視してキャッシュへ
-        }
+      if (Object.keys(map).length > 0) {
+        cacheStudents(map);
+        cachedStudentMap = map;
+        return map;
       }
-      const fallbackMap = readStudentCache();
-      cachedStudentMap = fallbackMap;
-      return fallbackMap;
+    } catch {
+      // CSV 取得失敗。localStorage キャッシュへフォールバック。
     }
+    const fallbackMap = readStudentCache();
+    if (Object.keys(fallbackMap).length > 0) {
+      cachedStudentMap = fallbackMap;
+    }
+    return fallbackMap;
   }
   function getDisplayNameFromSnapshotRecord(record, fallback = 'クラスメイト') {
     const uid = String(record && record.uid || '').trim();
