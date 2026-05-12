@@ -498,6 +498,18 @@ input {
   white-space: nowrap;
 }
 
+.ranking-display-name {
+  color: var(--prefilled);
+  font-weight: 800;
+}
+
+.ranking-no {
+  margin-left: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .ranking-meta {
   display: flex;
   flex-direction: column;

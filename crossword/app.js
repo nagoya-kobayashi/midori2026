@@ -127,7 +127,7 @@
       }
       const student = resolveAuthStudent(result.user);
       if (!student) {
-        showLoginPrompt("ログイン中のユーザは1年生の名簿にありません。別のユーザでログインしてください。");
+        showLoginPrompt("ログイン中のユーザは名簿にありません。別のユーザでログインしてください。");
         return;
       }
       state.selectedStudent = student;
@@ -136,11 +136,52 @@
       if (displayName) {
         state.displayNameByUid.set(student.uid, displayName);
       }
+      runSchemaCleanupOnce();
       showIdentity(student);
       return;
     }
     state.authUser = null;
     showLoginPrompt();
+  }
+
+  function runSchemaCleanupOnce() {
+    const url = getGasUrl();
+    if (!url) {
+      return;
+    }
+    try {
+      if (localStorage.getItem("crosswordSchemaCleanupDone") === "1") {
+        return;
+      }
+    } catch {
+      /* localStorage 利用不可でも続行 */
+    }
+
+    const columnRenames = {};
+    state.terms.forEach((term) => {
+      if (term.legacyId && term.legacyId !== term.id) {
+        columnRenames[term.legacyId] = term.id;
+      }
+    });
+
+    const payload = JSON.stringify({
+      action: "cleanupSchema",
+      columnRenames
+    });
+
+    fetch(url, {
+      method: "POST",
+      mode: "no-cors",
+      body: payload,
+      headers: { "Content-Type": "text/plain;charset=UTF-8" },
+      keepalive: true
+    }).then(() => {
+      try {
+        localStorage.setItem("crosswordSchemaCleanupDone", "1");
+      } catch {
+        /* ignore */
+      }
+    }).catch((error) => console.warn("schema cleanup failed", error));
   }
 
   async function loadStudents() {
@@ -368,16 +409,15 @@
 
   function prepareStudents(rows) {
     return rows
-      .filter((row) => row.year.trim() === "1")
       .map((row) => ({
-        uid: row.id.trim(),
-        year: row.year.trim(),
-        className: row.class.trim().toUpperCase(),
+        uid: String(row.id || "").trim(),
+        year: String(row.year || "").trim(),
+        className: String(row.class || "").trim().toUpperCase(),
         no: String(Number(row.no)),
-        name: row.name.trim(),
-        kana: row.kana.trim()
+        name: String(row.name || "").trim(),
+        kana: String(row.kana || "").trim()
       }))
-      .filter((student) => student.uid && student.className && student.no !== "NaN")
+      .filter((student) => student.uid && student.year && student.className && student.no !== "NaN")
       .sort((a, b) => (
         Number(a.year) - Number(b.year)
         || a.className.localeCompare(b.className)
@@ -413,16 +453,28 @@
       })
       .filter(Boolean);
 
-    const numberCounts = active.reduce((counts, term) => {
+    const legacyCounts = active.reduce((counts, term) => {
       counts.set(term.number, (counts.get(term.number) || 0) + 1);
+      return counts;
+    }, new Map());
+    const baseCounts = active.reduce((counts, term) => {
+      const base = `${term.direction}${term.number}`;
+      counts.set(base, (counts.get(base) || 0) + 1);
       return counts;
     }, new Map());
 
     return active.map((term) => {
-      const duplicated = numberCounts.get(term.number) > 1;
-      const directionCode = term.direction === "タテ" ? "V" : "H";
-      const id = duplicated ? `${term.number}_${directionCode}_${term.x}_${term.y}` : term.number;
-      return { ...term, id };
+      const legacyDup = legacyCounts.get(term.number) > 1;
+      const legacyDirectionCode = term.direction === "タテ" ? "V" : "H";
+      const legacyId = legacyDup
+        ? `${term.number}_${legacyDirectionCode}_${term.x}_${term.y}`
+        : term.number;
+
+      const base = `${term.direction}${term.number}`;
+      const baseDup = baseCounts.get(base) > 1;
+      const id = baseDup ? `${base}_${term.x}_${term.y}` : base;
+
+      return { ...term, id, legacyId };
     });
   }
 
@@ -1214,7 +1266,7 @@
         isSelf,
         count,
         lastSolvedAt,
-        name: rankingDisplayName(student)
+        displayName: state.displayNameByUid.get(student.uid) || ""
       };
     });
 
@@ -1245,7 +1297,18 @@
 
       const name = document.createElement("span");
       name.className = "ranking-name";
-      name.textContent = entry.name;
+      if (entry.displayName) {
+        const dn = document.createElement("span");
+        dn.className = "ranking-display-name";
+        dn.textContent = entry.displayName;
+        const no = document.createElement("span");
+        no.className = "ranking-no";
+        no.textContent = `[${entry.student.no}]`;
+        name.appendChild(dn);
+        name.appendChild(no);
+      } else {
+        name.textContent = entry.student.name;
+      }
 
       const meta = document.createElement("span");
       meta.className = "ranking-meta";
@@ -1270,14 +1333,6 @@
     });
 
     els.rankingList.replaceChildren(fragment);
-  }
-
-  function rankingDisplayName(student) {
-    const displayName = state.displayNameByUid.get(student.uid) || "";
-    if (displayName) {
-      return `${student.no}:${displayName}`;
-    }
-    return student.name;
   }
 
   function formatLastSolvedAt(value) {
@@ -1342,6 +1397,9 @@
       return;
     }
 
+    if (!state.termsByLegacyId) {
+      state.termsByLegacyId = new Map(state.terms.map((term) => [term.legacyId, term]));
+    }
     rows.forEach((row) => {
       const uid = String(row.uid || "").trim();
       if (!uid) {
@@ -1352,13 +1410,6 @@
         if (key === "uid") {
           return;
         }
-        if (key === "displayName") {
-          const dn = String(value || "").trim();
-          if (dn) {
-            state.displayNameByUid.set(uid, dn);
-          }
-          return;
-        }
         if (key === "lastSolvedAt") {
           const ts = String(value || "").trim();
           if (ts) {
@@ -1366,8 +1417,12 @@
           }
           return;
         }
-        if (isTruthyCell(value) && state.termsById.has(key)) {
-          solved.add(key);
+        if (!isTruthyCell(value)) {
+          return;
+        }
+        const term = state.termsById.get(key) || state.termsByLegacyId.get(key);
+        if (term) {
+          solved.add(term.id);
         }
       });
       state.remoteProgress.set(uid, solved);
@@ -1406,7 +1461,6 @@
       uid: state.currentStudent.uid,
       wordId,
       name: state.currentStudent.name,
-      displayName: state.authUser?.displayName || "",
       year: state.currentStudent.year,
       className: state.currentStudent.className,
       no: state.currentStudent.no
