@@ -68,17 +68,12 @@
   async function init() {
     bindEvents();
     try {
-      const [termRows, studentRows] = await Promise.all([
-        loadCsv("crossword_terms.csv"),
-        loadCsv("student.csv")
-      ]);
-      state.students = prepareStudents(studentRows);
-      state.studentsByUid = new Map(state.students.map((student) => [student.uid, student]));
+      const termRows = await loadCsv("crossword_terms.csv");
       state.terms = prepareTerms(termRows);
       state.termsById = new Map(state.terms.map((term) => [term.id, term]));
       buildBoard();
     } catch (error) {
-      showAuthError("データを読み込めません。");
+      showAuthError("問題データを読み込めません。");
       console.error(error);
       return;
     }
@@ -115,14 +110,21 @@
         authRequired: false,
         showLoginButton: false
       });
-      applyAuthResult(result);
+      await applyAuthResult(result);
     } catch (error) {
       showAuthError(error && error.userMessage ? error.userMessage : "認証エラーが発生しました。");
     }
   }
 
-  function applyAuthResult(result) {
+  async function applyAuthResult(result) {
     if (result && result.mode === "user" && result.user) {
+      try {
+        await loadStudents();
+      } catch (error) {
+        showAuthError("生徒名簿を読み込めません。");
+        console.error(error);
+        return;
+      }
       const student = resolveAuthStudent(result.user);
       if (!student) {
         showLoginPrompt("ログイン中のユーザは1年生の名簿にありません。別のユーザでログインしてください。");
@@ -139,6 +141,51 @@
     }
     state.authUser = null;
     showLoginPrompt();
+  }
+
+  async function loadStudents() {
+    if (state.students.length > 0) {
+      return;
+    }
+    let rows = [];
+    if (hasMidoriAuthSession() && window.MidoriAuth && typeof window.MidoriAuth.fetchStudentRoster === "function") {
+      // 校外モード (MidoriAuth セッションあり): GAS 経由で名簿取得。
+      // 個人情報保護のため student.csv にはフォールバックしない。
+      try {
+        const result = await window.MidoriAuth.fetchStudentRoster();
+        if (result && result.ok && Array.isArray(result.students)) {
+          rows = result.students;
+          result.students.forEach((entry) => {
+            const id = String(entry.id || "").trim();
+            const dn = String(entry.displayName || "").trim();
+            if (id && dn) {
+              state.displayNameByUid.set(id, dn);
+            }
+          });
+        } else {
+          console.warn("MidoriAuth.fetchStudentRoster returned non-ok or empty:", result);
+        }
+      } catch (error) {
+        console.warn("MidoriAuth.fetchStudentRoster failed", error);
+      }
+    } else {
+      // 校内モード (MidoriAuth セッションなし): student.csv を直接読む。
+      rows = await loadCsv("student.csv");
+    }
+    state.students = prepareStudents(rows);
+    state.studentsByUid = new Map(state.students.map((student) => [student.uid, student]));
+  }
+
+  function hasMidoriAuthSession() {
+    if (!window.MidoriAuth || typeof window.MidoriAuth.getStoredSession !== "function") {
+      return false;
+    }
+    try {
+      const session = window.MidoriAuth.getStoredSession();
+      return Boolean(session && session.userId && session.loginToken);
+    } catch (error) {
+      return false;
+    }
   }
 
   function resolveAuthStudent(user) {
@@ -232,7 +279,7 @@
         appName: "クロスワード",
         required: true
       });
-      applyAuthResult(result);
+      await applyAuthResult(result);
     } catch (error) {
       if (error && error.reason === "login_cancelled") {
         showLoginPrompt();
