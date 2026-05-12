@@ -143,16 +143,15 @@ input {
 .game-screen {
   width: 100vw;
   height: 100vh;
-  padding-top: 70px;
+  display: flex;
+  flex-direction: column;
 }
 
 .top-bar {
-  position: fixed;
-  z-index: 20;
+  position: sticky;
   top: 0;
-  left: 0;
-  right: 0;
-  height: 70px;
+  z-index: 20;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -192,7 +191,7 @@ input {
 
 .game-layout {
   width: 100%;
-  height: calc(100vh - 70px);
+  flex: 1 1 auto;
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -469,7 +468,7 @@ input {
 
 .ranking-item {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
@@ -489,6 +488,7 @@ input {
   font-weight: 900;
   color: #0f4f9a;
   text-align: center;
+  white-space: nowrap;
 }
 
 .ranking-name {
@@ -652,13 +652,10 @@ input {
   }
 
   .game-layout {
-    height: auto;
-    min-height: calc(100vh - 70px);
     grid-template-columns: 1fr;
   }
 
   .board-pane {
-    height: calc(100vh - 70px);
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
@@ -678,23 +675,10 @@ input {
   }
 
   .top-bar {
-    height: 78px;
     align-items: flex-start;
     flex-direction: column;
     gap: 4px;
     padding: 8px 12px;
-  }
-
-  .game-screen {
-    padding-top: 78px;
-  }
-
-  .game-layout {
-    min-height: calc(100vh - 78px);
-  }
-
-  .board-pane {
-    height: calc(100vh - 78px);
   }
 
   .score-badge .score-count {
