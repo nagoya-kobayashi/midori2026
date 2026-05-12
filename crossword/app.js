@@ -102,10 +102,22 @@
     if (!els.topBar) {
       return;
     }
-    const h = els.topBar.offsetHeight;
-    if (h > 0) {
-      document.documentElement.style.setProperty("--top-bar-h", h + "px");
+    const measured = els.topBar.offsetHeight;
+    if (measured <= 0) {
+      return;
     }
+    // iPad では offsetHeight だけでは実描画とズレて重なるため、固定値で 15px 加算する。
+    const total = measured + (isIPad() ? 15 : 0);
+    document.documentElement.style.setProperty("--top-bar-h", total + "px");
+  }
+
+  function isIPad() {
+    const ua = navigator.userAgent || "";
+    if (/iPad/.test(ua)) {
+      return true;
+    }
+    // iOS 13+ では iPad の UA が Mac と同じになるため、タッチ有無で判定する。
+    return navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
   }
 
   async function runAuthFlow() {
@@ -1269,6 +1281,14 @@
 
   function renderRanking() {
     if (!els.rankingList || !state.currentStudent) {
+      return;
+    }
+
+    if (!state.sharedStateInitialized) {
+      const loading = document.createElement("li");
+      loading.className = "ranking-loading";
+      loading.textContent = "クラスのデータを読み込み中…";
+      els.rankingList.replaceChildren(loading);
       return;
     }
 

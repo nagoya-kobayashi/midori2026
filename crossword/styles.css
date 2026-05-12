@@ -532,6 +532,15 @@ input {
   line-height: 1;
 }
 
+.ranking-loading {
+  list-style: none;
+  padding: 16px 12px;
+  text-align: center;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 14px;
+}
+
 .move-help,
 .term-overlay {
   position: fixed;
