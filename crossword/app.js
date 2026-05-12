@@ -18,6 +18,7 @@
     authLoginButton: document.getElementById("authLoginButton"),
     authStartButton: document.getElementById("authStartButton"),
     authLogoutButton: document.getElementById("authLogoutButton"),
+    topBar: document.querySelector(".top-bar"),
     playerBadge: document.getElementById("playerBadge"),
     scoreBadge: document.getElementById("scoreBadge"),
     crosswordGrid: document.getElementById("crosswordGrid"),
@@ -90,10 +91,21 @@
     els.crosswordGrid.addEventListener("click", handleBoardClick);
     document.addEventListener("keydown", handleKeydown);
     window.addEventListener("resize", () => {
+      updateTopBarOffset();
       if (state.currentStudent) {
         renderCards();
       }
     });
+  }
+
+  function updateTopBarOffset() {
+    if (!els.topBar) {
+      return;
+    }
+    const h = els.topBar.offsetHeight;
+    if (h > 0) {
+      document.documentElement.style.setProperty("--top-bar-h", h + "px");
+    }
   }
 
   async function runAuthFlow() {
@@ -557,6 +569,10 @@
     state.previousCounts.set(state.currentStudent.uid, state.solvedWords.size);
     els.loginScreen.hidden = true;
     els.gameScreen.hidden = false;
+    requestAnimationFrame(() => {
+      updateTopBarOffset();
+      renderCards();
+    });
     renderAll();
     fetchSharedState();
   }

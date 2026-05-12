@@ -143,15 +143,17 @@ input {
 .game-screen {
   width: 100vw;
   height: 100vh;
+  padding-top: var(--top-bar-h, 78px);
   display: flex;
   flex-direction: column;
 }
 
 .top-bar {
-  position: sticky;
+  position: fixed;
   top: 0;
+  left: 0;
+  right: 0;
   z-index: 20;
-  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -208,7 +210,7 @@ input {
 }
 
 .crossword-grid {
-  --grid-size: min(calc(50vw - 36px), calc(100vh - 190px));
+  --grid-size: min(calc(50vw - 36px), calc(100vh - var(--top-bar-h, 78px) - 120px));
   --cell-size: calc(var(--grid-size) / 10);
   align-self: center;
   justify-self: center;
@@ -661,7 +663,7 @@ input {
   }
 
   .crossword-grid {
-    --grid-size: min(calc(100vw - 32px), calc(100vh - 190px));
+    --grid-size: min(calc(100vw - 32px), calc(100vh - var(--top-bar-h, 78px) - 120px));
   }
 
   .side-pane {
