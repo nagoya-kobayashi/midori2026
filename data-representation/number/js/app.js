@@ -15,6 +15,8 @@
   const DIVISION_ROLL_MS = 1180;
   const REMAINDER_ORIGIN_MS = 560;
   const REMAINDER_FLIGHT_MS = 480;
+  const REFERENCE_WIDTH = 1366;
+  const REFERENCE_HEIGHT = 768;
 
   const SYMBOLS = {
     decimal: "0123456789".split(""),
@@ -82,6 +84,11 @@
   document.addEventListener("DOMContentLoaded", init);
 
   function init() {
+    if (shouldUseMobileReplica()) {
+      initMobileReplica();
+      return;
+    }
+
     app.canvas = document.getElementById("stage");
     app.ctx = app.canvas.getContext("2d", { alpha: false });
 
@@ -96,7 +103,9 @@
       divisionValueForm: document.getElementById("divisionValueForm"),
       divisionValueInput: document.getElementById("divisionValueInput"),
       divisionValueButton: document.getElementById("divisionValueButton"),
+      divisionModeButton: document.getElementById("divisionModeButton"),
       divisorButtons: Array.from(document.querySelectorAll(".divisor-button")),
+      numberStage: document.getElementById("numberStage"),
       decimalDigits: document.getElementById("decimalDigits"),
       binaryDigits: document.getElementById("binaryDigits"),
       hexDigits: document.getElementById("hexDigits"),
@@ -122,6 +131,8 @@
 
     dom.startButton.addEventListener("click", startExperience);
     dom.resetButton.addEventListener("click", resetValue);
+    dom.divisionModeButton.addEventListener("click", enterDivisionMode);
+    dom.numberStage.addEventListener("click", handleStageTap);
     dom.divisionValueInput.max = String(MAX_VALUE);
     dom.divisionValueForm.addEventListener("submit", handleDivisionValueSubmit);
     dom.divisorButtons.forEach((button) => {
@@ -140,12 +151,52 @@
     requestAnimationFrame(frame);
   }
 
+  function isMobileReplicaFrame() {
+    return new URLSearchParams(window.location.search).get("mobile-frame") === "1";
+  }
+
+  function shouldUseMobileReplica() {
+    if (isMobileReplicaFrame()) {
+      return false;
+    }
+    const coarsePointer = window.matchMedia?.("(pointer: coarse)").matches || navigator.maxTouchPoints > 0;
+    return coarsePointer && Math.min(window.innerWidth, window.innerHeight) <= 600;
+  }
+
+  function initMobileReplica() {
+    document.body.classList.add("mobile-replica-host");
+    const frame = document.createElement("iframe");
+    const source = new URL(window.location.href);
+    source.searchParams.set("mobile-frame", "1");
+    frame.className = "mobile-replica-frame";
+    frame.title = "数値のデジタル表現 教材";
+    frame.allowFullscreen = true;
+    frame.src = source.href;
+    document.body.appendChild(frame);
+
+    const fitFrame = () => {
+      const viewport = window.visualViewport;
+      const viewportWidth = viewport?.width || window.innerWidth;
+      const viewportHeight = viewport?.height || window.innerHeight;
+      const scale = Math.min(viewportWidth / REFERENCE_WIDTH, viewportHeight / REFERENCE_HEIGHT);
+      frame.style.left = (viewportWidth - REFERENCE_WIDTH * scale) / 2 + "px";
+      frame.style.top = (viewportHeight - REFERENCE_HEIGHT * scale) / 2 + "px";
+      frame.style.transform = "scale(" + scale + ")";
+    };
+
+    fitFrame();
+    window.addEventListener("resize", fitFrame);
+    window.addEventListener("orientationchange", fitFrame);
+    window.visualViewport?.addEventListener("resize", fitFrame);
+  }
+
   async function startExperience() {
     if (app.started) {
       return;
     }
 
     app.started = true;
+    document.body.classList.add("experience-started");
     const fullscreenPromise = requestFullscreenSafely();
     dom.startOverlay.classList.add("is-hidden");
     showSplash("開始");
@@ -160,6 +211,9 @@
   }
 
   async function requestFullscreenSafely() {
+    if (isMobileReplicaFrame()) {
+      return true;
+    }
     const root = document.documentElement;
     if (document.fullscreenElement) {
       return true;
@@ -173,6 +227,17 @@
     } catch (error) {
       return false;
     }
+  }
+
+  function handleStageTap() {
+    if (!app.started || app.divisionBusy) {
+      return;
+    }
+    if (app.mode === "division") {
+      divideOnce();
+      return;
+    }
+    incrementValue();
   }
 
   function handleKeyDown(event) {
