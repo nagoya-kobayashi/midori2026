@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>文字列のデジタル表現 教材</title>
+  <link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+  <canvas id="stage" aria-label="文字列と文字コード表の可視化背景"></canvas>
+
+  <div id="startOverlay" class="start-overlay">
+    <div class="start-panel">
+      <div class="start-kicker">情報I / 文字列のデジタル表現</div>
+      <h1>文字が 0 と 1 になる瞬間を見よう</h1>
+      <p>ASCII文字コード表から文字を選び、文字列がビット列と16進数表記へ変わる流れを確認します。</p>
+      <button id="startButton" class="start-button" type="button">
+        <span>はじめる</span>
+        <strong>全画面表示</strong>
+      </button>
+    </div>
+  </div>
+
+  <header class="hud" aria-live="polite">
+    <div class="hud-main">
+      <div class="hud-label">文字列のデジタル表現</div>
+      <div id="stageTitle" class="hud-title">準備中</div>
+    </div>
+    <div class="hud-badges">
+      <span id="encodingBadge" class="badge badge-source">ASCIIコード</span>
+      <span id="lengthBadge" class="badge">0文字</span>
+      <span id="dataBadge" class="badge">0 bit / 0 Byte</span>
+    </div>
+  </header>
+
+  <nav id="encodingPanel" class="encoding-panel" aria-label="文字コード体系の切り替え" hidden>
+    <button class="encoding-button is-active" type="button" data-encoding="ascii">ASCIIコード</button>
+    <button class="encoding-button" type="button" data-encoding="jis">JISコード</button>
+    <button class="encoding-button" type="button" data-encoding="shiftjis">シフトJISコード</button>
+    <button class="encoding-button" type="button" data-encoding="eucjp">EUCコード</button>
+    <button class="encoding-button" type="button" data-encoding="unicode">Unicode</button>
+  </nav>
+
+  <main id="stringStage" class="string-stage" aria-live="polite">
+    <section class="table-section" aria-label="文字コード表">
+      <div class="table-head">
+        <div>
+          <div id="tableTitle" class="table-title">ASCIIコード表</div>
+          <div id="tableCaption" class="table-caption">ASCII 0x00 - 0x7F</div>
+        </div>
+        <div id="pageBadge" class="page-badge">0x00-0x7F</div>
+      </div>
+      <div id="codeTableViewport" class="code-table-viewport">
+        <div id="codeTable" class="code-table"></div>
+      </div>
+    </section>
+
+    <section class="input-section" aria-label="文字列入力と変換結果">
+      <input id="stringInput" class="string-input" type="email" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="email" lang="en" aria-label="文字列">
+      <div id="letterRail" class="letter-rail" aria-label="変換中の文字列">
+        <div id="letterTrack" class="letter-track"></div>
+      </div>
+      <section id="resultPanel" class="result-panel" hidden>
+        <div id="hexLine" class="hex-line"></div>
+        <div class="count-line">
+          <strong id="bitCounter">0 bit</strong>
+          <strong id="byteCounter">0 Byte</strong>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <div id="notice" class="notice" hidden></div>
+  <div id="stepSplash" class="step-splash" hidden></div>
+  <div id="frameFlash" class="frame-flash" aria-hidden="true"></div>
+  <div id="flyLayer" class="fly-layer" aria-hidden="true"></div>
+
+  <footer class="control-bar">
+    <div id="footerReadout" class="footer-readout">ASCIIコード / 入力 0文字</div>
+    <button id="clearButton" class="reset-button" type="button">消去</button>
+  </footer>
+
+  <script src="./js/app.js" defer></script>
+</body>
+</html>

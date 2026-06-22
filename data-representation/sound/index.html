@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>音のデジタル化 A/D・D/A 変換教材</title>
+  <link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+  <canvas id="stage" aria-label="音の波形とデジタル化の可視化"></canvas>
+
+  <div id="startOverlay" class="start-overlay">
+    <div class="start-panel">
+      <div class="start-kicker">情報I / 音のデジタル化</div>
+      <h1>波形が 0 と 1 になる瞬間を見よう</h1>
+      <p>マイク入力またはサンプル波形を使って、標本化・量子化・符号化・復元を順番に確認します。</p>
+      <button id="startButton" class="start-button" type="button">
+        <span>クリックして開始</span>
+        <strong>マイクON・全画面表示</strong>
+      </button>
+      <p id="startNote" class="start-note">マイクや全画面表示が使えない場合も、サンプル波形で続行します。</p>
+    </div>
+  </div>
+
+  <header class="hud" aria-live="polite">
+    <div>
+      <div class="hud-label">音の A/D 変換・D/A 変換</div>
+      <div id="stageTitle" class="hud-title">準備中</div>
+    </div>
+    <div class="hud-badges">
+      <span id="slideBadge" class="badge">Slide 1</span>
+      <span id="sourceBadge" class="badge badge-source">入力: 待機</span>
+      <span id="dataBadge" class="badge">データ量: -</span>
+    </div>
+  </header>
+
+  <section id="paramPanel" class="param-panel" hidden>
+    <h2>パラメータ調整</h2>
+    <label class="control-row" for="sampleRateRange">
+      <span>標本化周波数</span>
+      <input id="sampleRateRange" type="range" min="16" max="512" step="4" value="64">
+      <input id="sampleRateInput" type="number" min="16" max="512" step="4" value="64">
+      <span class="unit">Hz</span>
+    </label>
+    <label class="control-row" for="quantBitsRange">
+      <span>量子化ビット数</span>
+      <input id="quantBitsRange" type="range" min="2" max="6" step="1" value="4">
+      <input id="quantBitsInput" type="number" min="2" max="6" step="1" value="4">
+      <span class="unit">bit</span>
+    </label>
+    <div id="paramStats" class="param-stats">標本数: 16 / 段階数: 16 / データ量: 64bit</div>
+  </section>
+
+  <div id="notice" class="notice" hidden></div>
+  <div id="stepSplash" class="step-splash" hidden></div>
+  <div id="spaceFlash" class="space-flash" aria-hidden="true"></div>
+
+  <footer class="legend" aria-label="工程の凡例">
+    <div class="legend-item" data-stage="continuous">
+      <span class="legend-icon icon-wave"></span>
+      <span>連続した線</span>
+    </div>
+    <div class="legend-item" data-stage="sampling">
+      <span class="legend-icon icon-sampling"></span>
+      <span>標本化</span>
+    </div>
+    <div class="legend-item" data-stage="quantizing">
+      <span class="legend-icon icon-quantizing"></span>
+      <span>量子化</span>
+    </div>
+    <div class="legend-item" data-stage="encoding">
+      <span class="legend-icon icon-encoding"></span>
+      <span>符号化</span>
+    </div>
+  </footer>
+
+  <script src="./js/app.js" defer></script>
+</body>
+</html>

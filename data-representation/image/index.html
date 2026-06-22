@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>画像のデジタル化 A/D 変換教材</title>
+  <link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+  <canvas id="stage" aria-label="画像のデジタル化を可視化する教材"></canvas>
+
+  <div id="startOverlay" class="start-overlay">
+    <div class="start-panel">
+      <div class="start-kicker">情報I / 画像のデジタル化</div>
+      <h1>写真が 0 と 1 になる瞬間を見よう</h1>
+      <p>撮影した画像を、標本化・量子化・符号化でビット列へ変換し、もう一度画像へ戻して画質とデータ量を確かめます。</p>
+      <button id="startButton" class="start-button" type="button">
+        <span>クリックして開始</span>
+        <strong>カメラON・全画面表示</strong>
+      </button>
+      <p class="start-note">カメラが使えない場合も、サンプル画像や画像アップロードで進められます。</p>
+    </div>
+  </div>
+
+  <header class="hud" aria-live="polite">
+    <div class="hud-main">
+      <div class="hud-label">画像の A/D 変換</div>
+      <div id="slideTitle" class="hud-title">準備中</div>
+    </div>
+    <div class="hud-badges">
+      <span id="slideBadge" class="badge">SLIDE 0 / 10</span>
+      <span id="sourceBadge" class="badge badge-source">入力: 待機</span>
+      <span id="resolutionBadge" class="badge">20 × 15</span>
+      <span id="dataBadge" class="badge" hidden>- bit</span>
+    </div>
+  </header>
+
+  <aside id="infoPanel" class="info-panel" aria-live="polite" hidden>
+    <div class="info-panel-title">データ量</div>
+    <dl id="infoStats"></dl>
+  </aside>
+
+  <section id="cameraPanel" class="camera-panel" hidden>
+    <button id="captureButton" class="primary-button" type="button">パシャッと撮影</button>
+    <button id="sampleButton" class="secondary-button" type="button">サンプル画像</button>
+    <label class="secondary-button file-button">
+      画像アップロード
+      <input id="uploadInput" type="file" accept="image/*">
+    </label>
+  </section>
+
+  <section id="adjustPanel" class="adjust-panel" hidden>
+    <div class="control-group resolution-controls">
+      <label class="control-row" for="widthRange">
+        <span>横の画素数</span>
+        <input id="widthRange" type="range" min="10" max="800" step="5" value="20">
+        <output id="widthOutput">20</output>
+      </label>
+      <label class="control-row" for="heightRange">
+        <span>縦の画素数</span>
+        <input id="heightRange" type="range" min="10" max="600" step="5" value="15">
+        <output id="heightOutput">15</output>
+      </label>
+    </div>
+
+    <div class="control-group mode-controls" role="group" aria-label="表現モード">
+      <button class="mode-button is-active" type="button" data-mode="rgb">RGB</button>
+      <button class="mode-button" type="button" data-mode="gray">グレースケール</button>
+      <button class="mode-button" type="button" data-mode="bw">白黒2階調</button>
+    </div>
+
+    <label class="control-row level-control" for="levelRange">
+      <span>階調</span>
+      <input id="levelRange" type="range" min="1" max="8" step="1" value="8">
+      <output id="levelOutput">256</output>
+    </label>
+  </section>
+
+  <div id="notice" class="notice" hidden></div>
+  <div id="stepSplash" class="step-splash" hidden></div>
+  <div id="flash" class="flash" aria-hidden="true"></div>
+  <div id="frameFlash" class="frame-flash" aria-hidden="true"></div>
+
+  <footer class="legend" aria-label="工程の凡例">
+    <div class="legend-item" data-stage="image">
+      <span class="legend-icon icon-image"></span>
+      <span>画像</span>
+    </div>
+    <div class="legend-item" data-stage="sampling">
+      <span class="legend-icon icon-sampling"></span>
+      <span>標本化</span>
+    </div>
+    <div class="legend-item" data-stage="quantizing">
+      <span class="legend-icon icon-quantizing"></span>
+      <span>量子化</span>
+    </div>
+    <div class="legend-item" data-stage="encoding">
+      <span class="legend-icon icon-encoding"></span>
+      <span>符号化</span>
+    </div>
+  </footer>
+
+  <video id="cameraVideo" playsinline muted autoplay hidden></video>
+
+  <script src="./js/app.js" defer></script>
+</body>
+</html>
